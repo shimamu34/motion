@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<title>運動分析ツール</title>
+<style>
+  body {
+    margin: 0; padding: 20px;
+    font-family: Arial, sans-serif;
+    background: #f0f0f0;
+  }
+  h1 {
+    text-align: center;
+    margin-bottom: 20px;
+    font-size: 2rem;
+    user-select: none;
+  }
+  .player {
+    width: 80vw;
+    max-width: 800px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+  }
+  .video-wrapper {
+    position: relative;
+    width: 100%;
+    max-width: 800px;
+    aspect-ratio: 16 / 9;
+    min-height: 300px;
+    background: black;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 0 12px rgba(0,0,0,0.4);
+  }
+  video, canvas {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    object-fit: contain;
+    border-radius: 10px;
+    background: black;
+    pointer-events: none;
+  }
+  /* コントロール上段 */
+  .controls-top {
+    margin-top: 12px;
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 10px;
+    align-items: center;
+    justify-content: space-between;
+    overflow-x: auto;
+  }
+  /* コントロール下段 */
+  .controls-bottom {
+    margin-top: 8px;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    justify-content: flex-start;
+    overflow-x: auto;
+  }
+  button, select, input[type=range] {
+    font-size: 14px;
+    padding: 6px 10px;
+    border-radius: 8px;
+    border: 1px solid #ccc;
+    background: white;
+    cursor: pointer;
+    flex-grow: 1;
+    min-width: 90px;
+    max-width: 150px;
+  }
+  input[type=range] {
+    flex-grow: 3;
+  }
+  label {
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+  }
+  .timeDisplay {
+    min-width: 90px;
+    text-align: center;
+    font-size: 14px;
+    user-select: none;
+  }
+</style>
+</head>
+<body>
+
+<h1>運動分析ツール</h1>
+
+<div id="player" class="player">
+  <input type="file" accept="video/*" />
+  <div class="video-wrapper">
+    <video muted playsinline></video>
+    <canvas></canvas>
+  </div>
+
+  <div class="controls-top">
+    <button class="playpause">再生 ▶️</button>
+    <button class="frameBack">◀︎1フレーム戻る</button>
+    <button class="frameForward">1フレーム進む▶︎</button>
+    <input type="range" class="seek" min="0" max="1" step="0.001" value="0" />
+    <div class="timeDisplay">00:00 / 00:00</div>
+    <select class="speed">
+      <option value="0.05">0.05x</option>
+      <option value="0.1">0.1x</option>
+      <option value="0.25">0.25x</option>
+      <option value="0.5">0.5x</option>
+      <option value="1" selected>1x</option>
+      <option value="1.5">1.5x</option>
+      <option value="2">2x</option>
+    </select>
+  </div>
+
+  <div class="controls-bottom">
+    <label><input type="checkbox" class="stickToggle" checked /> スティックピクチャー化</label>
+    <button class="flipBtn">左右反転 ↔️</button>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
+<script>
+(async () => {
+  const detector = await poseDetection.createDetector(
+    poseDetection.SupportedModels.MoveNet,
+    { modelType: poseDetection.movenet.modelType.SINGLEPOSE_THUNDER }
+  );
+
+  const FPS = 30;
+  const FRAME_TIME = 1 / FPS;
+
+  class Player {
+    constructor(root) {
+      this.root = root;
+      this.video = root.querySelector('video');
+      this.canvas = root.querySelector('canvas');
+      this.ctx = this.canvas.getContext('2d');
+      this.fileInput = root.querySelector('input[type=file]');
+      this.playBtn = root.querySelector('.playpause');
+      this.frameBackBtn = root.querySelector('.frameBack');
+      this.frameForwardBtn = root.querySelector('.frameForward');
+      this.seekBar = root.querySelector('.seek');
+      this.speedSel = root.querySelector('.speed');
+      this.stickToggle = root.querySelector('.stickToggle');
+      this.flipBtn = root.querySelector('.flipBtn');
+      this.timeDisplay = root.querySelector('.timeDisplay');
+
+      this.poses = [];
+      this.isFlipped = false;
+      this.animationId = null;
+
+      this.isSeekingFrame = false;
+
+      this.fileInput.onchange = () => this.loadVideo();
+      this.playBtn.onclick = () => this.togglePlay();
+      this.frameBackBtn.onclick = () => this.frameStep(-1);
+      this.frameForwardBtn.onclick = () => this.frameStep(1);
+      this.seekBar.oninput = () => this.seek();
+      this.speedSel.onchange = () => this.changeSpeed();
+      this.stickToggle.onchange = () => { if (this.video.paused) this.updateFrame(); };
+      this.flipBtn.onclick = () => this.toggleFlip();
+
+      this.video.onloadedmetadata = () => {
+        this.canvas.width = this.video.videoWidth;
+        this.canvas.height = this.video.videoHeight;
+        this.seekBar.max = this.video.duration;
+        this.seekBar.value = 0;
+        this.updateTimeDisplay();
+      };
+
+      this.video.ontimeupdate = () => {
+        if (!this.isSeekingFrame) this.seekBar.value = this.video.currentTime;
+        this.updateTimeDisplay();
+      };
+
+      this.video.onpause = () => {
+        this.playBtn.textContent = "再生 ▶️";
+        cancelAnimationFrame(this.animationId);
+        this.updateFrame();
+      };
+
+      this.video.onplay = () => {
+        this.playBtn.textContent = "一時停止 ⏸️";
+        this.render();
+      };
+
+      this.video.onseeked = () => {
+        if (this.isSeekingFrame) {
+          this.isSeekingFrame = false;
+          this.updateFrame();
+          if (!this.video.paused) {
+            this.render();
+          }
+        }
+      };
+    }
+
+    toggleFlip() {
+      this.isFlipped = !this.isFlipped;
+      this.video.style.transform = this.isFlipped ? 'scaleX(-1)' : 'scaleX(1)';
+      this.canvas.style.transform = this.isFlipped ? 'scaleX(-1)' : 'scaleX(1)';
+    }
+
+    loadVideo() {
+      const file = this.fileInput.files[0];
+      if (!file) return;
+      this.video.src = URL.createObjectURL(file);
+      this.video.load();
+      this.video.play();
+    }
+
+    togglePlay() {
+      if (this.video.paused) this.video.play();
+      else this.video.pause();
+    }
+
+    async updateFrame() {
+      this.clearCanvas();
+      if (this.stickToggle.checked) {
+        this.ctx.fillStyle = "black";
+        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+      } else {
+        this.ctx.drawImage(this.video, 0, 0, this.canvas.width, this.canvas.height);
+      }
+      await this.estimatePoses();
+      this.drawAllPoses();
+    }
+
+    async render() {
+      if (this.video.paused || this.video.ended) {
+        cancelAnimationFrame(this.animationId);
+        return;
+      }
+      this.clearCanvas();
+      if (this.stickToggle.checked) {
+        this.ctx.fillStyle = "black";
+        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+      } else {
+        this.ctx.drawImage(this.video, 0, 0, this.canvas.width, this.canvas.height);
+      }
+      await this.estimatePoses();
+      this.drawAllPoses();
+      this.animationId = requestAnimationFrame(() => this.render());
+    }
+
+    frameStep(direction) {
+      if (!this.video.paused) this.video.pause();
+      this.isSeekingFrame = true;
+      let targetTime = this.video.currentTime + direction * FRAME_TIME;
+      if (targetTime < 0) targetTime = 0;
+      if (targetTime > this.video.duration) targetTime = this.video.duration;
+      this.video.currentTime = targetTime;
+    }
+
+    seek() {
+      if (!this.video.paused) this.video.pause();
+      this.isSeekingFrame = false;
+      this.video.currentTime = this.seekBar.value;
+      this.updateFrame();
+    }
+
+    changeSpeed() {
+      this.video.playbackRate = parseFloat(this.speedSel.value);
+    }
+
+    async estimatePoses() {
+      try {
+        this.poses = await detector.estimatePoses(this.video);
+      } catch (e) {
+        console.error("Pose detection error:", e);
+        this.poses = [];
+      }
+    }
+
+    drawAllPoses() {
+      const ctx = this.ctx;
+      const scaleX = this.canvas.width / this.video.videoWidth;
+      const scaleY = this.canvas.height / this.video.videoHeight;
+      const adjacentPairs = poseDetection.util.getAdjacentPairs(poseDetection.SupportedModels.MoveNet);
+
+      this.poses.forEach(pose => {
+        pose.keypoints.forEach(kp => {
+          if (kp.score > 0.2) {
+            ctx.beginPath();
+            ctx.fillStyle = 'white';
+            ctx.globalAlpha = Math.min(1, kp.score + 0.2);
+            const x = kp.x * scaleX;
+            const y = kp.y * scaleY;
+            ctx.arc(x, y, 5, 0, 2 * Math.PI);
+            ctx.fill();
+          }
+        });
+
+        ctx.globalAlpha = 1.0;
+        ctx.strokeStyle = "#40c4ff";  // 明るい水色
+        ctx.lineWidth = 6;            // 太さ6に
+
+        adjacentPairs.forEach(([i, j]) => {
+          const kp1 = pose.keypoints[i];
+          const kp2 = pose.keypoints[j];
+          if (kp1.score > 0.3 && kp2.score > 0.3) {
+            const x1 = kp1.x * scaleX;
+            const y1 = kp1.y * scaleY;
+            const x2 = kp2.x * scaleX;
+            const y2 = kp2.y * scaleY;
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.stroke();
+          }
+        });
+      });
+    }
+
+    clearCanvas() {
+      this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    }
+
+    formatTime(seconds) {
+      const m = Math.floor(seconds / 60);
+      const s = Math.floor(seconds % 60);
+      return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    }
+
+    updateTimeDisplay() {
+      if (!this.video.duration || isNaN(this.video.duration)) {
+        this.timeDisplay.textContent = "00:00 / 00:00";
+        return;
+      }
+      const current = this.formatTime(this.video.currentTime);
+      const total = this.formatTime(this.video.duration);
+      this.timeDisplay.textContent = `${current} / ${total}`;
+    }
+  }
+
+  new Player(document.getElementById("player"));
+})();
+</script>
+
+</body>
+</html>
