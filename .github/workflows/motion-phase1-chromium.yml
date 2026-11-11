@@ -1,0 +1,47 @@
+name: Validate motion Phase-1 in real Chromium
+
+on:
+  push:
+    branches:
+      - fix/motion-pr2-review-remediation-2026-11-11
+    paths:
+      - index.html
+      - tests/motion-phase1-chromium.cjs
+      - .github/workflows/motion-phase1-chromium.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  chromium-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Find browser and install a synthetic-video generator when missing
+        run: |
+          which google-chrome
+          if ! command -v ffmpeg >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq ffmpeg
+          fi
+          which ffmpeg
+          echo "BROWSER_BIN=$(which google-chrome)" >> "$GITHUB_ENV"
+      - name: Install browser automation library without a new package manifest
+        run: npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund playwright-core@1.56.1
+      - name: Generate synthetic, non-person video fixtures
+        run: |
+          mkdir -p tests/fixtures
+          ffmpeg -hide_banner -loglevel error -y -f lavfi -i "color=c=red:s=320x180:r=30" -t 2 -c:v libvpx -b:v 400k -pix_fmt yuv420p -an tests/fixtures/motion-test-a.webm
+          ffmpeg -hide_banner -loglevel error -y -f lavfi -i "color=c=green:s=320x180:r=30" -t 2 -c:v libvpx -b:v 400k -pix_fmt yuv420p -an tests/fixtures/motion-test-b.webm
+      - name: Test in headless Chromium (actual media playback, no pose model)
+        run: node tests/motion-phase1-chromium.cjs
+      - name: Upload screenshot evidence, when produced
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: motion-chromium-fallback-screenshot
+          path: tests/fixtures/browser-fallback.png
+          if-no-files-found: ignore
+          retention-days: 7
