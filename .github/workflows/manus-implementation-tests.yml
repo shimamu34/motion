@@ -7,6 +7,9 @@ on:
       - ".github/workflows/manus-implementation-dispatch.yml"
       - ".github/workflows/manus-implementation-tests.yml"
       - "tests/test_manus_implementation_dispatch.py"
+      - "tests/test_manus_implementation_monitor.py"
+      - ".github/scripts/manus_implementation_monitor.py"
+      - ".github/workflows/manus-implementation-monitor.yml"
 
 permissions:
   contents: read
@@ -20,6 +23,8 @@ jobs:
         with:
           persist-credentials: false
       - name: Python syntax check
-        run: python3 -m py_compile .github/scripts/manus_implementation_dispatch.py tests/test_manus_implementation_dispatch.py
+        run: python3 -m py_compile .github/scripts/manus_implementation_dispatch.py .github/scripts/manus_implementation_monitor.py tests/test_manus_implementation_dispatch.py tests/test_manus_implementation_monitor.py
       - name: Offline owner-approval, branch, SHA, and duplicate tests
-        run: python3 -m unittest discover -s tests -p 'test_manus_implementation_dispatch.py' -v
+        run: |
+          python3 -m unittest discover -s tests -p 'test_manus_implementation_dispatch.py' -v
+          python3 -m unittest discover -s tests -p 'test_manus_implementation_monitor.py' -v
