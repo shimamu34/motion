@@ -146,7 +146,6 @@ class MockGitHub(unittest.TestCase):
 
 
     def test_cue_packet_preserves_manus_as_implementation_owner(self):
-        import ai_handoff_packet as packet
         sample_pr = {"number": 7, "title": "Demo", "head": {"sha": "a" * 40, "ref": "feature/demo"}, "base": {"ref": "main"}}
         out = packet.make_packet(sample_pr, [], False)
         self.assertIn("Manus実装補助依頼", out)
