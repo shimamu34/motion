@@ -1,11 +1,11 @@
-name: One-time Manus code review of motion PR 2 (user-approved)
+name: One-time Manus re-review of updated motion PR 2
 
 on:
   push:
     branches:
-      - automation/manus-pr2-compact-review-2026-11-11
+      - automation/manus-pr2-rereview-2026-11-11
     paths:
-      - .github/manus-pr2-2026-11-11.trigger
+      - .github/manus-pr2-rereview-2026-11-11.trigger
 
 permissions:
   contents: write
@@ -13,7 +13,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: manus-pr2-single-approved-review-2026-11-11
+  group: manus-pr2-rereview-single-approved-2026-11-11
   cancel-in-progress: false
 
 jobs:
