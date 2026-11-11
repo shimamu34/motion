@@ -1,0 +1,29 @@
+name: Test optional Claude/Cue cost-approval gates (offline)
+
+on:
+  push:
+    branches:
+      - feature/optional-claude-cue-direct-review-2026-11-11
+    paths:
+      - .github/scripts/optional_ai_review_gate.py
+      - .github/scripts/cue_review_via_manus.py
+      - .github/workflows/claude-code-review-opt-in.yml
+      - .github/workflows/cue-direct-review-opt-in.yml
+      - .github/workflows/optional-ai-review-guard-tests.yml
+      - tests/test_optional_ai_review.py
+
+permissions:
+  contents: read
+
+jobs:
+  safe-offline-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Python syntax check
+        run: python3 -m py_compile .github/scripts/optional_ai_review_gate.py .github/scripts/cue_review_via_manus.py tests/test_optional_ai_review.py
+      - name: Offline tests (no GitHub writes or AI API calls)
+        run: python3 -m unittest discover -s tests -p 'test_optional_ai_review.py' -v
