@@ -1,11 +1,11 @@
 # Manus Phase 1: 骨格モデル失敗時の動画操作維持
 
 - Task ID: 20261111-MOTION-PHASE1
-- Status: DRAFT
+- Status: READY
 - Assigned to: Manus
 - Created by: ChatGPT
 - Created: 2026-11-11
-- Approval required: Yes
+- Approval required: No
 - Target repository: shimamu34/motion
 - Target branch: fix/motion-startup-resilience
 - Allowed source file: index.html
