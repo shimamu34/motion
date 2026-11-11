@@ -1,0 +1,35 @@
+name: One-time Manus code review of motion PR 2 (user-approved)
+
+on:
+  push:
+    branches:
+      - automation/manus-pr2-compact-review-2026-11-11
+    paths:
+      - .github/manus-pr2-2026-11-11.trigger
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: manus-pr2-single-approved-review-2026-11-11
+  cancel-in-progress: false
+
+jobs:
+  review:
+    if: github.repository == 'shimamu34/motion'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: "${{ github.sha }}"
+          fetch-depth: 0
+      - name: Start one compact review task without rerunning PR review
+        env:
+          MANUS_API_KEY: "${{ secrets.MANUS_API_KEY }}"
+          GH_TOKEN: "${{ github.token }}"
+          GITHUB_REPOSITORY: "${{ github.repository }}"
+          GITHUB_REF_NAME: "${{ github.ref_name }}"
+        run: python3 scripts/manus_pr2_compact_review.py
