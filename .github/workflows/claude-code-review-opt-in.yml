@@ -80,6 +80,6 @@ jobs:
           outcome=os.environ.get('REVIEW_OUTCOME','unknown')
           url=os.environ['REVIEW_RUN_URL']
           body=guard.format_note('claude',n,sha,'ACTION_FINISHED_NEEDS_INDEPENDENT_REVIEW',
-              f'GitHub Actions step outcome={outcome}; Logs={url}. Claude's actual PR response must be checked separately.')
+              f"GitHub Actions step outcome={outcome}; Logs={url}. Claude review output must be checked separately.")
           guard.github(f"/issues/comments/{comment}",'PATCH',{'body':body})
           PY
