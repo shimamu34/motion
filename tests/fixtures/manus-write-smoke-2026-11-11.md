@@ -1,7 +1,7 @@
 # Manusのmotion書き込み権限・最小実装テスト
 
 - Test ID: MOTION-MANUS-WRITE-2026-11-11
-- Status: PENDING
+- Status: DONE
 - Scope: このファイル1件への編集のみ
 - Project: shimamu34/motion
 - Branch: feature/manus-write-smoke-2026-11-11
@@ -19,3 +19,4 @@
 GitHub上の実ファイル、変更コミット、差分をChatGPTが独立に照合する。
 Manus自身の完了報告だけでテスト合格とはしない。
 これは実際のアプリ機能修正を伴わない安全な書き込み確認である。
+- Verification: Manusが指定ブランチに変更をコミットした
