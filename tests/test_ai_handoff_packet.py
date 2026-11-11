@@ -144,5 +144,15 @@ class MockGitHub(unittest.TestCase):
             packet.main()
 
 
+
+    def test_cue_packet_preserves_manus_as_implementation_owner(self):
+        sample_pr = {"number": 7, "title": "Demo", "head": {"sha": "a" * 40, "ref": "feature/demo"}, "base": {"ref": "main"}}
+        out = packet.make_packet(sample_pr, [], False)
+        self.assertIn("Manus実装補助依頼", out)
+        self.assertIn("開発責任者はManus", out)
+        self.assertIn("Manusに引き継ぐ指示案", out)
+        self.assertIn("/ai-result cue " + "a" * 40, out)
+        self.assertIn("Cue未実行", out)
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,28 @@
+name: Verify Manus-led Cue developer handoff (offline)
+
+on:
+  pull_request:
+    paths:
+      - '.github/scripts/ai_handoff_packet.py'
+      - 'skills/cue-developer-motion-pr-review/SKILL.md'
+      - 'docs/CUE_DEVELOPER_PORTABLE_SKILL_SETUP.md'
+      - 'tests/test_ai_handoff_packet.py'
+      - '.github/workflows/manus-cue-support-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  offline-handoff:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check Python syntax
+        run: python3 -m py_compile .github/scripts/ai_handoff_packet.py tests/test_ai_handoff_packet.py
+      - name: Test handoff packet with mocked GitHub only
+        run: python3 -m unittest discover -s tests -p 'test_ai_handoff_packet.py' -v
+      - name: Validate Cue portable Skill contract without Cue API
+        run: python3 -m unittest discover -s tests -p 'test_cue_developer_skill_contract.py' -v
