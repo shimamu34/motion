@@ -91,8 +91,11 @@ def gate(event, env, mode):
     if mode == "claude" and not env.get("CLAUDE_CODE_OAUTH_TOKEN"):
         print("NO_CREDENTIAL: Claude Code subscription token absent")
         return None
-    if mode == "cue" and (not env.get("MANUS_API_KEY") or not env.get("CUE_AGENT_TASK_ID")):
-        print("NO_CREDENTIAL: Manus API key or intended Cue agent task ID absent")
+    if mode == "cue" and (
+        not env.get("MANUS_API_KEY")
+        or not re.fullmatch(r"[A-Za-z0-9]{22}", env.get("CUE_AGENT_TASK_ID") or "")
+    ):
+        print("NO_CREDENTIAL: Manus key or valid 22-character Cue agent main task ID absent")
         return None
     number = event["issue"]["number"]
     pr = github(f"/pulls/{number}")
