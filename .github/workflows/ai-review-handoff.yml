@@ -1,0 +1,34 @@
+name: Prepare Claude and Cue PR handoff packet
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+concurrency:
+  group: ai-handoff-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: >-
+      github.repository == 'shimamu34/motion' &&
+      github.event.pull_request.user.login == 'shimamu34'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      # pull_request_target is privileged. Checkout only trusted main code.
+      # Do NOT check out, install, or execute the PR's contents.
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Generate PR metadata and bounded-diff handoff comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/ai_handoff_packet.py
