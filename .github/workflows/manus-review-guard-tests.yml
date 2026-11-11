@@ -1,0 +1,28 @@
+name: Validate Manus PR approval and cost guardrails
+
+on:
+  push:
+    branches:
+      - fix/manus-pr-review-stabilize-2026-11-11
+    paths:
+      - .github/workflows/manus-pr-review.yml
+      - .github/scripts/manus_pr_review.py
+      - tests/test_manus_pr_review.py
+      - .github/workflows/manus-review-guard-tests.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-guard-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Python syntax validation
+        run: python3 -m py_compile .github/scripts/manus_pr_review.py tests/test_manus_pr_review.py
+      - name: Offline security and cost control regression tests (never calls Manus)
+        run: python3 -m unittest discover -s tests -p 'test_manus_pr_review.py' -v
