@@ -87,9 +87,28 @@ def github(path, method="GET", payload=None):
     if data is not None:
         headers["Content-Type"] = "application/json"
     req = urllib.request.Request(GH_API + path, data=data, headers=headers, method=method)
-    with urllib.request.urlopen(req, timeout=40) as response:
-        raw = response.read().decode("utf-8")
-        return json.loads(raw) if raw else {}
+    try:
+        with urllib.request.urlopen(req, timeout=40) as response:
+            raw = response.read().decode("utf-8")
+            return json.loads(raw) if raw else {}
+    except urllib.error.HTTPError as exc:
+        # A 403 can reflect a token policy or endpoint-specific permission.
+        # Log only a bounded, redacted GitHub error message, never headers,
+        # request bodies, API keys or the untrusted PR description.
+        summary = "HTTP " + str(exc.code)
+        try:
+            data = json.loads(exc.read().decode("utf-8", errors="replace")[:1500])
+            reason = str(data.get("message", ""))[:140] if isinstance(data, dict) else ""
+            for secret_name in ("GH_TOKEN", "MANUS_API_KEY"):
+                secret = os.environ.get(secret_name)
+                if secret:
+                    reason = reason.replace(secret, "[redacted]")
+            reason = reason.replace("\\n", " ").replace("\\r", " ").replace("\\t", " ")
+            if reason:
+                summary += "; GitHub message=" + reason
+        except (ValueError, TypeError, UnicodeError):
+            pass
+        raise RuntimeError(f"GitHub API {method} failed: {summary}") from None
 
 
 def create_manus_task(payload):
