@@ -1,0 +1,52 @@
+name: Cue by Manus PR review (explicit opt-in)
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: cue-by-manus-review-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  cue:
+    # Disabled by default. The owner must BOTH set a repository flag to true
+    # AND write the exact comment /cue-review. Can consume Manus credits.
+    if: >-
+      github.repository == 'shimamu34/motion' &&
+      github.event.issue.pull_request != null &&
+      github.event.comment.user.login == 'shimamu34' &&
+      github.event.comment.body == '/cue-review' &&
+      vars.ENABLE_CUE_DIRECT_REVIEW == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Require consent, correct PR SHA, correct Cue agent and no prior request
+        id: gate
+        env:
+          REVIEW_PROVIDER: cue
+          DIRECT_REVIEW_ENABLED: ${{ vars.ENABLE_CUE_DIRECT_REVIEW }}
+          GH_TOKEN: ${{ github.token }}
+          MANUS_API_KEY: ${{ secrets.MANUS_API_KEY }}
+          CUE_AGENT_TASK_ID: ${{ secrets.CUE_AGENT_TASK_ID }}
+        run: python3 .github/scripts/optional_ai_review_gate.py
+      - name: Send one approved Cue agent request and reconcile result
+        if: steps.gate.outputs.should_run == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MANUS_API_KEY: ${{ secrets.MANUS_API_KEY }}
+          CUE_AGENT_TASK_ID: ${{ secrets.CUE_AGENT_TASK_ID }}
+          PR_NUMBER: ${{ steps.gate.outputs.pr }}
+          PR_HEAD: ${{ steps.gate.outputs.sha }}
+          RESERVATION_COMMENT_ID: ${{ steps.gate.outputs.comment_id }}
+          PUBLISH_CUE_REVIEW_TEXT: ${{ vars.PUBLISH_CUE_REVIEW_TEXT }}
+        run: python3 .github/scripts/cue_review_via_manus.py
