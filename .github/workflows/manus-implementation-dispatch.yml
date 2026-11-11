@@ -1,0 +1,39 @@
+name: Manus implementation from PR (explicit opt-in)
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+concurrency:
+  group: manus-implementation-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  implement:
+    # Disabled by default. A PR opening or update never dispatches a paid task.
+    # Only a repo-owner comment with an exact HEAD SHA can trigger it.
+    if: >-
+      github.repository == 'shimamu34/motion' &&
+      github.event.issue.pull_request != null &&
+      github.event.comment.user.login == 'shimamu34' &&
+      startsWith(github.event.comment.body, '/manus-implement ') &&
+      vars.ENABLE_MANUS_IMPLEMENTATION == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout trusted default branch only
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Check ownership, exact PR SHA, scope, duplicate requests and dispatch at most once
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MANUS_API_KEY: ${{ secrets.MANUS_API_KEY }}
+          ENABLE_MANUS_IMPLEMENTATION: ${{ vars.ENABLE_MANUS_IMPLEMENTATION }}
+        run: python3 .github/scripts/manus_implementation_dispatch.py
