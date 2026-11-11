@@ -130,6 +130,15 @@ class MonitorTests(unittest.TestCase):
             mon.monitor(api=fake, detail_api=lambda _: {})
         self.assertEqual(fake.writes(), [])
 
+    def test_monitor_workflow_can_edit_pr_comments(self):
+        wf = (ROOT / ".github" / "workflows" / "manus-implementation-monitor.yml").read_text("utf-8")
+        self.assertIn("  issues: write\n  pull-requests: write\n", wf)
+        self.assertIn("vars.ENABLE_MANUS_IMPLEMENTATION == 'true'", wf)
+        self.assertIn("workflow_dispatch:", wf)
+        self.assertIn("schedule:", wf)
+        self.assertNotIn("task.create", wf)
+
+
 
 if __name__ == "__main__":
     unittest.main()
