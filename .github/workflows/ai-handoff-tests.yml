@@ -1,0 +1,26 @@
+name: Test AI handoff packet generation without external AI
+
+on:
+  push:
+    branches:
+      - feature/ai-review-handoff-packets-2026-11-11
+    paths:
+      - .github/scripts/ai_handoff_packet.py
+      - tests/test_ai_handoff_packet.py
+      - .github/workflows/ai-handoff-tests.yml
+
+permissions:
+  contents: read
+
+jobs:
+  safe-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check Python syntax
+        run: python3 -m py_compile .github/scripts/ai_handoff_packet.py tests/test_ai_handoff_packet.py
+      - name: Run offline tests with mock GitHub (no paid APIs)
+        run: python3 -m unittest discover -s tests -p 'test_ai_handoff_packet.py' -v
