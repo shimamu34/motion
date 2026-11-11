@@ -210,6 +210,33 @@ class ApprovalContractTests(unittest.TestCase):
         ai.assert_not_called()
         self.assertFalse(gh.writes())
 
+    def test_comment_workflow_has_pr_write_permission_and_cost_gate(self):
+        wf = (ROOT / ".github" / "workflows" / "manus-implementation-dispatch.yml").read_text("utf-8")
+        self.assertIn("  issues: write\n  pull-requests: write\n", wf)
+        self.assertIn("vars.ENABLE_MANUS_IMPLEMENTATION == 'true'", wf)
+        self.assertIn("issue_comment:", wf)
+        self.assertNotIn("pull_request_target:", wf)
+
+    def test_github_http_403_is_redacted_and_never_prints_token(self):
+        import io
+        import json
+        from urllib.error import HTTPError
+        secret = ENV["GH_TOKEN"]
+        body = json.dumps({
+            "message": "Resource not accessible by integration; " + secret
+        }).encode("utf-8")
+        failure = HTTPError("https://api.github.com/repos/shimamu34/motion/issues/17/comments",
+                            403, "Forbidden", {}, io.BytesIO(body))
+        with patch.dict(m.os.environ, ENV), patch.object(m.urllib.request, "urlopen",
+                                                         side_effect=failure):
+            with self.assertRaises(RuntimeError) as ctx:
+                m.github("/issues/17/comments", "POST", {"body": "test"})
+        message = str(ctx.exception)
+        self.assertIn("HTTP 403", message)
+        self.assertIn("Resource not accessible by integration", message)
+        self.assertNotIn(secret, message)
+
+
 
 if __name__ == "__main__":
     unittest.main()
