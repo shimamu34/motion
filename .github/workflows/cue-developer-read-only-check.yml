@@ -1,0 +1,55 @@
+name: Verify Cue developer agent exists (read-only)
+
+on:
+  push:
+    branches:
+      - test/cue-developer-agent-read-2026-11-11
+    paths:
+      - .github/workflows/cue-developer-read-only-check.yml
+
+permissions:
+  contents: read
+
+jobs:
+  identify-developer:
+    if: github.repository == 'shimamu34/motion'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Read ONLY agent.list; do not print keys, agent IDs or other agents
+        env:
+          MANUS_API_KEY: ${{ secrets.MANUS_API_KEY }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re, urllib.request, urllib.error
+          key = os.getenv("MANUS_API_KEY", "")
+          if not key:
+              raise SystemExit("NO_API_KEY_CONFIGURED")
+          req = urllib.request.Request(
+              "https://api.manus.ai/v2/agent.list",
+              headers={"x-manus-api-key": key, "User-Agent": "motion-cue-developer-read-only"},
+              method="GET",
+          )
+          try:
+              with urllib.request.urlopen(req, timeout=30) as resp:
+                  obj = json.load(resp)
+          except urllib.error.HTTPError as err:
+              print("MANUS_AGENT_LIST_HTTP_STATUS", err.code)
+              raise SystemExit(1)
+          except Exception as err:
+              print("MANUS_AGENT_LIST_TRANSPORT_FAILURE", type(err).__name__)
+              raise SystemExit(1)
+          if not isinstance(obj, dict) or obj.get("ok") is not True or not isinstance(obj.get("data"), list):
+              print("MANUS_AGENT_LIST_UNEXPECTED_RESPONSE")
+              raise SystemExit(1)
+          matches = [a for a in obj["data"] if isinstance(a, dict) and str(a.get("nickname", "")).strip().casefold() == "developer"]
+          print("DEVELOPER_AGENT_MATCH_COUNT", len(matches))
+          if len(matches) != 1:
+              raise SystemExit("DEVELOPER_AGENT_MUST_MATCH_EXACTLY_ONCE")
+          task = matches[0].get("task_id", "")
+          valid = isinstance(task,str) and re.fullmatch(r"[A-Za-z0-9]{22}",task) is not None
+          print("DEVELOPER_TASK_ID_FORMAT_VALID", valid)
+          print("NO_AI_TASK_STARTED; NO_AGENT_ID_OR_SECRET_PRINTED")
+          if not valid:
+              raise SystemExit("DEVELOPER_TASK_ID_INVALID")
+          PY
