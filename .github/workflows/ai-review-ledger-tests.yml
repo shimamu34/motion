@@ -7,7 +7,9 @@ on:
     paths:
       - .github/workflows/ai-review-result-ledger.yml
       - .github/scripts/ai_review_result_ledger.py
+      - .github/scripts/ai_handoff_packet.py
       - tests/test_ai_review_result_ledger.py
+      - tests/test_ai_handoff_packet.py
       - .github/workflows/ai-review-ledger-tests.yml
 
 permissions:
@@ -25,3 +27,5 @@ jobs:
         run: python3 -m py_compile .github/scripts/ai_review_result_ledger.py tests/test_ai_review_result_ledger.py
       - name: Verify no-charge GitHub result collection with mocked API
         run: python3 -m unittest discover -s tests -p 'test_ai_review_result_ledger.py' -v
+      - name: Verify generated handoff packet includes intake instructions
+        run: python3 -m unittest discover -s tests -p 'test_ai_handoff_packet.py' -v
