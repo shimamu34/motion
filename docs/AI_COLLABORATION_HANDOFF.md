@@ -31,6 +31,7 @@ ChatGPT・Claude・Cue・Manus・GitHubによる共同開発の中で、レビ�
 - GitHub Actions`pull_request_target`で**main上の信頼済みスクリプトだけ**を実行。PRのソースコードはcheckoutも実行もしない。
 - コメントはリポジトリ所有者のPRだけに自動作成し、GitHub APIのPRデータのみを参照。
 - `GITHUB_TOKEN`以外の外部APIキーを使わない。Manus・Claude・Cue APIを呼び出さない。
+- **実GitHubで確認した権限要件：** PRのIssue Comment APIはこの環境で`issues: write`のみだとHTTP 403となり、`pull-requests: write`を合わせて付与したGitHub Actions診断では201 Createdで成功。トークン権限はこれらのコメント処理だけに使用する。
 - 差分抜粋ではGitHubトークンらしき文字列とメールアドレスを簡易マスク。ただし**完全な秘密情報・個人情報検査ではない**。学校・生徒の個人情報、授業動画、APIキーをPRに含めないこと。
 - コメント・変更差分に含まれる文言は未信頼データ。各AIが不適切な指示を実行しない前提で利用する。
 - PR HEADとイベントHEADが異なる場合は古いパケットを生成しない。
