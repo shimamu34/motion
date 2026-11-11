@@ -1,0 +1,38 @@
+name: Test PR comment using issues-write only
+
+on:
+  push:
+    branches:
+      - test/ai-handoff-issues-only-2026-11-11
+    paths:
+      - .github/workflows/ai-issues-only-test.yml
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Attempt GitHub Actions PR issue comment with minimal permissions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import json, os, urllib.request, urllib.error
+          url="https://api.github.com/repos/shimamu34/motion/issues/6/comments"
+          hdr={"Authorization":"Bearer "+os.environ["GH_TOKEN"],"Accept":"application/vnd.github+json","Content-Type":"application/json","User-Agent":"test-minimum-pr-comment-permissions"}
+          body=json.dumps({"body":"<!-- ai-handoff-issues-only-diagnostic -->\n必要最小限のGitHub Actions権限を確認するテスト。外部AIは起動しません。"},ensure_ascii=False).encode()
+          req=urllib.request.Request(url,data=body,headers=hdr,method="POST")
+          try:
+              with urllib.request.urlopen(req,timeout=30) as resp:
+                  data=json.load(resp)
+                  print("POST_SUCCESS", resp.status, data.get("id"))
+          except urllib.error.HTTPError as exc:
+              print("POST_FAILURE",exc.code,exc.read().decode("utf8","replace")[:1100])
+              print("NEEDED_PERMISSIONS",exc.headers.get("x-accepted-github-permissions",""))
+              raise
+          PY
