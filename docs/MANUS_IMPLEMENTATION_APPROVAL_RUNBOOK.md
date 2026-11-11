@@ -23,7 +23,8 @@
 5. GitHub Actionsは**Manus API実行より前に**PRに予約コメントを作る。通信失敗でも同一HEADには自動再依頼しない。
 6. Manusへは**作業ブランチのみ**の最小実装を依頼する。mainの変更・新規PR・マージ・デプロイ・秘密情報取得は禁止。
 7. 成功時はManus task IDとURLをPRへ書き戻す。これは「起動依頼成功」であり、開発完了ではない。
-8. `manus-implementation-monitor.yml` が設定された間隔で、PRに記録済みのManus task IDの状態を読み取り、停止時にPRのBotコメントへ『追加レビュー待ち』と記録する。GitHub Actionsのcronは遅延・欠落する場合があるため、正確な30分間隔を保証しない。\n9. ユーザーとChatGPTがManusタスクの状態・GitHubコミット・差分・CI・実機動作を独立に確認し、必要なら追加修正を別途依頼する。
+8. `manus-implementation-monitor.yml` が設定された間隔で、PRに記録済みのManus task IDの状態を読み取り、停止時にPRのBotコメントへ『追加レビュー待ち』と記録する。GitHub Actionsのcronは遅延・欠落する場合があるため、正確な30分間隔を保証しない。
+9. ユーザーとChatGPTがManusタスクの状態・GitHubコミット・差分・CI・実機動作を独立に確認し、必要なら追加修正を別途依頼する。
 
 PR本文の最低形式：
 
@@ -56,7 +57,16 @@ PR本文の最低形式：
 - 完全な無人修正・PRレビュー・マージ：**未実装**。マージは最終的に利用者が判断する。
 - **Cueの別アカウントからの自動レビューやClaude Codeの有料レビューも、現状は別経路で未実証**。
 
-## 自動監視の動作\n\n- 起動時のBot予約コメントからManus task IDと承認時SHAを読み取る。\n- `ENABLE_MANUS_IMPLEMENTATION=true`が明示的に有効な場合のみ、GitHub Actionsの定時実行（約30分間隔の目安）で開始済みタスクを照会。新しいManusタスクは作成しない。\n- ManusのAPIが「stopped、バックグラウンドジョブなし」と返したら、PR HEADが変化したかどうかを報告し、**人による結果確認待ち**にする。\n- API応答が不明・認証に失敗した場合、完了を主張しない。GitHub Actionsの実行ログを確認する。\n- PRがクローズされた場合は監視対象外になる。古いPRや既存レビュー経路には影響しない。\n\n## CI\n
+## 自動監視の動作
+
+- 起動時のBot予約コメントからManus task IDと承認時SHAを読み取る。
+- `ENABLE_MANUS_IMPLEMENTATION=true`が明示的に有効な場合のみ、GitHub Actionsの定時実行（約30分間隔の目安）で開始済みタスクを照会。新しいManusタスクは作成しない。
+- ManusのAPIが「stopped、バックグラウンドジョブなし」と返したら、PR HEADが変化したかどうかを報告し、**人による結果確認待ち**にする。
+- API応答が不明・認証に失敗した場合、完了を主張しない。GitHub Actionsの実行ログを確認する。
+- PRがクローズされた場合は監視対象外になる。古いPRや既存レビュー経路には影響しない。
+
+## CI
+
 `tests/test_manus_implementation_dispatch.py` と `tests/test_manus_implementation_monitor.py` はモックのみを使う。GitHub書き込み・Manus API・クレジット消費は伴わない。PR作成時に `Test Manus implementation approval gate (offline)` を実行する。
 
 ## 学校データ等の安全
