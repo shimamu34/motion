@@ -1,0 +1,27 @@
+name: Validate Cue developer Skill (no AI API)
+
+on:
+  push:
+    branches:
+      - feature/cue-developer-portable-skill-2026-11-11
+    paths:
+      - skills/cue-developer-motion-pr-review/SKILL.md
+      - docs/CUE_DEVELOPER_PORTABLE_SKILL_SETUP.md
+      - tests/test_cue_developer_skill_contract.py
+      - .github/workflows/cue-developer-skill-tests.yml
+
+permissions:
+  contents: read
+
+jobs:
+  offline-skill-check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Syntax check test runner
+        run: python3 -m py_compile tests/test_cue_developer_skill_contract.py
+      - name: Validate portable Cue Skill without executing Cue or Manus
+        run: python3 -m unittest discover -s tests -p 'test_cue_developer_skill_contract.py' -v
