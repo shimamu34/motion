@@ -1,0 +1,45 @@
+name: Validate motion WebKit engine fallback (not iOS)
+
+on:
+  push:
+    branches:
+      - fix/motion-startup-resilience
+    paths:
+      - tests/motion-webkit-fallback.cjs
+      - .github/workflows/motion-webkit-fallback.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  webkit-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Playwright WebKit browser and system dependencies
+        run: |
+          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund playwright-core@1.56.1
+          npx -y playwright@1.56.1 install --with-deps webkit
+      - name: Ensure ffmpeg is installed
+        run: |
+          if ! command -v ffmpeg >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq ffmpeg
+          fi
+      - name: Generate two synthetic H.264 MP4 movies
+        run: |
+          mkdir -p tests/fixtures
+          ffmpeg -hide_banner -loglevel error -y -f lavfi -i "color=c=red:s=320x180:r=30" -t 3 -c:v libx264 -pix_fmt yuv420p -an -movflags +faststart tests/fixtures/webkit-a.mp4
+          ffmpeg -hide_banner -loglevel error -y -f lavfi -i "color=c=green:s=320x180:r=30" -t 3 -c:v libx264 -pix_fmt yuv420p -an -movflags +faststart tests/fixtures/webkit-b.mp4
+      - name: Run actual Linux WebKit fallback smoke test
+        run: node tests/motion-webkit-fallback.cjs
+      - name: Save evidence screenshot if any
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: motion-linux-webkit-evidence
+          path: tests/fixtures/webkit-fallback.png
+          if-no-files-found: ignore
+          retention-days: 7
