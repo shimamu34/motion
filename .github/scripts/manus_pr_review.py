@@ -32,6 +32,7 @@ def approved(event, env):
     return (
         env.get("GITHUB_EVENT_NAME") == "issue_comment"
         and env.get("GITHUB_REPOSITORY") == REPO
+        and (event.get("repository") or {}).get("full_name") == REPO
         and env.get("GITHUB_REF") == "refs/heads/main"
         and event.get("action") == "created"
         and bool(issue.get("pull_request"))
@@ -191,6 +192,16 @@ def main():
     comment_id = reservation["id"]
     print(f"RESERVED: PR #{pr_number}, HEAD={sha}, comment={comment_id} (no Manus task yet)", flush=True)
 
+    # The PR may change while we reserve its review. Never pay to review an
+    # obsolete revision, even when the original command was valid.
+    current = gh(f"/pulls/{pr_number}")
+    if current.get("state") != "open" or (current.get("head") or {}).get("sha") != sha:
+        update_comment(comment_id, report_body(
+            marker, pr["html_url"], sha, "STALE_HEAD_NOT_DISPATCHED",
+            detail="承認後にPRのHEADが変化。Manus APIは呼び出していません。"
+        ))
+        return
+
     try:
         created = manuscript("task.create", {
             "message": {"content": prompt},
@@ -204,7 +215,8 @@ def main():
         if not created.get("ok") or not task_id:
             raise RuntimeError("task.create did not confirm a task ID")
     except Exception as exc:
-        error = safe_error(exc)
+        # http() already sanitized API failures; preserve only that safe text.
+        error = str(exc)[:300] if isinstance(exc, RuntimeError) else safe_error(exc)
         update_comment(comment_id, report_body(
             marker, pr["html_url"], sha, "TASK_CREATION_UNCONFIRMED",
             detail=f"Manus API依頼が確認できません: {error}。同一HEADの自動再試行は停止。"
@@ -243,10 +255,13 @@ def main():
             answer = manuscript(f"task.listMessages?task_id={task_id}&order=desc&limit=50")
             messages = answer.get("messages") or []
             candidates = [
-                (i.get("assistant_message") or {}).get("content")
+                ((i.get("assistant_message") or {}).get("content"),
+                 (i.get("assistant_message") or {}).get("delivery_kind"))
                 for i in messages if isinstance(i.get("assistant_message"), dict)
             ]
-            review = next((s for s in candidates if isinstance(s, str) and s.strip()), "")
+            review = next((s for s, kind in candidates if isinstance(s, str) and s.strip() and kind == "result"), "")
+            if not review:
+                review = next((s for s, _ in candidates if isinstance(s, str) and s.strip()), "")
         except Exception as exc:
             print(f"REVIEW_FETCH_UNCERTAIN task={task_id} error={safe_error(exc)}", flush=True)
 
