@@ -1,0 +1,45 @@
+name: Validate real MoveNet model in Chrome
+
+on:
+  push:
+    branches:
+      - fix/motion-startup-resilience
+    paths:
+      - tests/motion-real-model-chromium.cjs
+      - .github/workflows/motion-real-model-chromium.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  movenet-real:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ensure Chrome and ffmpeg are present
+        run: |
+          command -v google-chrome
+          if ! command -v ffmpeg >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq ffmpeg
+          fi
+          command -v ffmpeg
+          echo "BROWSER_BIN=$(command -v google-chrome)" >> "$GITHUB_ENV"
+      - name: Prepare isolated browser instrumentation
+        run: npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund playwright-core@1.56.1
+      - name: Generate synthetic geometric-person video (no real person data)
+        run: |
+          mkdir -p tests/fixtures
+          ffmpeg -hide_banner -loglevel error -y -f lavfi -i "color=c=white:s=320x480:r=15" -vf "drawbox=x=130:y=30:w=60:h=60:color=black:t=fill,drawbox=x=115:y=95:w=90:h=155:color=blue:t=fill,drawbox=x=45:y=112:w=70:h=24:color=black:t=fill,drawbox=x=205:y=112:w=70:h=24:color=black:t=fill,drawbox=x=130:y=250:w=25:h=170:color=black:t=fill,drawbox=x=170:y=250:w=25:h=170:color=black:t=fill" -t 12 -c:v libvpx -b:v 500k -pix_fmt yuv420p -an tests/fixtures/synthetic-person.webm
+      - name: Verify actual CDN scripts, model initialization and inference in Chrome
+        run: node tests/motion-real-model-chromium.cjs
+      - name: Save diagnostics screenshot if generated
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: motion-real-movenet-chrome-evidence
+          path: tests/fixtures/real-model-screen.png
+          if-no-files-found: ignore
+          retention-days: 7
