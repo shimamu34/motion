@@ -10,9 +10,11 @@ const code = matches.map((match) => match[1]).filter(Boolean).at(-1);
 assert.ok(code && code.includes('class Player'), 'Inline Player script missing');
 new vm.Script(code);
 
-async function boot({ model = false, modelReject = false } = {}) {
+async function boot({ model = false, modelReject = false, modelDelay = false } = {}) {
   const calls = [];
   const revoked = [];
+  const rafs = [];
+  let resolveModel;
   let id = 0;
   const ctx = {
     clearRect: () => calls.push('clearRect'),
@@ -65,6 +67,7 @@ async function boot({ model = false, modelReject = false } = {}) {
     movenet: { modelType: { SINGLEPOSE_THUNDER: 'Thunder' } },
     util: { getAdjacentPairs: () => [] },
     createDetector: async () => {
+      if (modelDelay) await new Promise(resolve => { resolveModel = resolve; });
       if (modelReject) throw Error('blocked weights');
       return { estimatePoses: async () => [] };
     }
@@ -77,12 +80,14 @@ async function boot({ model = false, modelReject = false } = {}) {
       createObjectURL: () => 'blob:test-' + (++id),
       revokeObjectURL: (value) => revoked.push(value)
     },
-    requestAnimationFrame: () => 7,
-    cancelAnimationFrame: () => {},
+    requestAnimationFrame: callback => { rafs.push(callback); return rafs.length; },
+    cancelAnimationFrame: () => {}, 
     console: { error: () => {} }
   };
-  await vm.runInNewContext(code, context);
-  return { calls, revoked, video, status, elements };
+  const bootPromise = vm.runInNewContext(code, context);
+  if (!modelDelay) await bootPromise;
+  return { calls, revoked, video, status, elements, rafs,
+    finishModel: async () => { if (resolveModel) resolveModel(); await bootPromise; } };
 }
 
 (async function run() {
@@ -142,6 +147,48 @@ async function boot({ model = false, modelReject = false } = {}) {
     x.elements['.stickToggle'].onchange();
     await Promise.resolve();
     assert.ok(!x.calls.includes('drawImage'), 'not allowed to draw unready video');
+  });
+
+  await check('Playback before video is ready schedules retry and eventually draws', async () => {
+    const x = await boot({ model: true });
+    x.video.paused = false;
+    x.video.readyState = 0;
+    x.video.videoWidth = 0;
+    x.video.videoHeight = 0;
+    x.video.onplay();
+    assert.equal(x.rafs.length, 1, 'a retry frame should be queued during media loading');
+    x.video.readyState = 4;
+    x.video.videoWidth = 640;
+    x.video.videoHeight = 360;
+    x.rafs.shift()();
+    await Promise.resolve();
+    assert.ok(x.calls.includes('fillRect'), 'render resumes as soon as video is ready');
+  });
+
+  await check('Model loaded during playback does not start a second render loop', async () => {
+    const x = await boot({ model: true, modelDelay: true });
+    x.video.paused = false;
+    x.video.onplay();
+    await Promise.resolve();
+    assert.equal(x.rafs.length, 1, 'one render loop before model is available');
+    await x.finishModel();
+    await Promise.resolve();
+    assert.equal(x.rafs.length, 1, 'model creation must not launch a second render loop');
+  });
+
+  await check('Synchronous video.play failure shows a user-facing error', async () => {
+    const x = await boot();
+    x.video.play = () => { throw Error('synchronous browser play failure'); };
+    x.elements['.playpause'].onclick();
+    assert.match(x.status.textContent, /動画を再生できませんでした/);
+  });
+
+  await check('Promise rejection from video.play shows a user-facing error', async () => {
+    const x = await boot();
+    x.video.play = () => Promise.reject(Error('play rejected'));
+    x.elements['.playpause'].onclick();
+    await Promise.resolve();
+    assert.match(x.status.textContent, /動画を再生できませんでした/);
   });
   console.log('Ran ' + count + ' Phase-1 offline checks');
 })().catch((err) => {

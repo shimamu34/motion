@@ -226,11 +226,15 @@
     }
 
     playVideo() {
-      const playPromise = this.video.play();
-      if (playPromise && typeof playPromise.catch === 'function') {
-        playPromise.catch(() => {
-          this.setStatus('動画を再生できませんでした。再生ボタンをもう一度押してください。');
-        });
+      try {
+        const playPromise = this.video.play();
+        if (playPromise && typeof playPromise.catch === 'function') {
+          playPromise.catch(() => {
+            this.setStatus('動画を再生できませんでした。再生ボタンをもう一度押してください。');
+          });
+        }
+      } catch (error) {
+        this.setStatus('動画を再生できませんでした。再生ボタンをもう一度押してください。');
       }
     }
 
@@ -279,7 +283,12 @@
         cancelAnimationFrame(this.animationId);
         return;
       }
-      if (this.video.readyState < 2 || !this.video.videoWidth || !this.video.videoHeight) return;
+      if (this.video.readyState < 2 || !this.video.videoWidth || !this.video.videoHeight) {
+        if (!this.video.paused && !this.video.ended) {
+          this.animationId = requestAnimationFrame(() => this.render());
+        }
+        return;
+      }
       this.clearCanvas();
       if (this.stickToggle.checked && detector) {
         this.ctx.fillStyle = "black";
@@ -398,7 +407,8 @@
     );
     modelState = 'ready';
     player.setModelStatus('姿勢モデルを読み込みました。骨格表示を利用できます。');
-    if (!player.video.paused) player.render();
+    // onplay already owns the render loop. Calling render() again here
+    // would create a second loop if a video was playing while MoveNet loaded.
   } catch (error) {
     console.error('Pose model loading error:', error);
     detector = null;
