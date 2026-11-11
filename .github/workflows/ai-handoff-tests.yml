@@ -4,8 +4,10 @@ on:
   push:
     branches:
       - feature/ai-review-handoff-packets-2026-11-11
+      - fix/ai-handoff-pr-comment-permission-2026-11-11
     paths:
       - .github/scripts/ai_handoff_packet.py
+      - .github/workflows/ai-review-handoff.yml
       - tests/test_ai_handoff_packet.py
       - .github/workflows/ai-handoff-tests.yml
 
