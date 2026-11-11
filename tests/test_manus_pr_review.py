@@ -166,6 +166,31 @@ class DispatchGuardsTests(unittest.TestCase):
         self.assertLess(sequence.index("reserved"), sequence.index("created"))
         self.assertEqual(sequence.count("updated"), 2)
 
+    def test_pr_head_changed_after_reservation_aborts_before_manus(self):
+        calls = 0
+        audit = []
+        def fake_gh(path, method="GET", data=None, accept=None):
+            nonlocal calls
+            if path == "/pulls/6" and accept is None:
+                calls += 1
+                return pr(SHA_A if calls == 1 else SHA_B)
+            if path.startswith("/issues/6/comments?"):
+                return []
+            if path == "/pulls/6" and accept:
+                return "diff --git " + "x" * 180
+            if path == "/issues/6/comments" and method == "POST":
+                audit.append("reserved")
+                return {"id": 9}
+            if path == "/issues/comments/9" and method == "PATCH":
+                self.assertIn("STALE_HEAD_NOT_DISPATCHED", data["body"])
+                audit.append("stale-head-recorded")
+                return {}
+            raise AssertionError(path)
+        with patch.dict(os.environ, self.env), patch.object(review, "gh", side_effect=fake_gh), patch.object(review, "manuscript") as manus:
+            review.main()
+        manus.assert_not_called()
+        self.assertEqual(audit, ["reserved", "stale-head-recorded"])
+
     def test_failed_task_creation_never_retries(self):
         sequence = []
         def fake_gh(path, method="GET", data=None, accept=None):
