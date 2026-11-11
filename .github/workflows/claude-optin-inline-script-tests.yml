@@ -1,0 +1,22 @@
+name: Validate Claude optional review workflow (offline)
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/claude-code-review-opt-in.yml"
+      - ".github/workflows/claude-optin-inline-script-tests.yml"
+      - "tests/test_claude_optin_workflow.py"
+
+permissions:
+  contents: read
+
+jobs:
+  offline-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify embedded Python syntax and manual opt-in restrictions
+        run: python3 -m unittest discover -s tests -p 'test_claude_optin_workflow.py' -v
