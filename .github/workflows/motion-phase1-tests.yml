@@ -1,0 +1,28 @@
+name: Test motion Phase-1 model-failure fallback
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - index.html
+      - tests/motion-phase1.test.js
+      - .github/workflows/motion-phase1-tests.yml
+  push:
+    branches:
+      - fix/motion-phase1-release-2026-11-11
+    paths:
+      - index.html
+      - tests/motion-phase1.test.js
+      - .github/workflows/motion-phase1-tests.yml
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run offline independent regression checks (no Manus API)
+        run: node tests/motion-phase1.test.js
