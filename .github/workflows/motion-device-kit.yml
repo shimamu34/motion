@@ -1,0 +1,57 @@
+name: Package motion device QA kit (no deployment)
+
+on:
+  push:
+    branches:
+      - fix/motion-startup-resilience
+    paths:
+      - .github/workflows/motion-device-kit.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    if: github.repository == 'shimamu34/motion' && github.ref_name == 'fix/motion-startup-resilience'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check file revision and media generator
+        run: |
+          test -s index.html
+          test -s device-test-kit/README.md
+          command -v ffmpeg || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg)
+          mkdir -p dist/motion-device-qa
+      - name: Copy approved test branch files
+        run: |
+          cp index.html device-test-kit/README.md device-test-kit/CHECKLIST.txt dist/motion-device-qa/
+          {
+            echo "Repository: shimamu34/motion"
+            echo "Branch: fix/motion-startup-resilience"
+            echo "Commit: $GITHUB_SHA"
+            echo "App: testing version, not production"
+          } > dist/motion-device-qa/VERSION.txt
+          sha256sum index.html >> dist/motion-device-qa/VERSION.txt
+      - name: Generate two privacy-safe demo videos
+        run: |
+          ffmpeg -hide_banner -loglevel error -y -f lavfi -i 'testsrc2=size=640x360:rate=30' -t 8 -c:v libx264 -preset veryfast -crf 28 -pix_fmt yuv420p -movflags +faststart -an dist/motion-device-qa/sample-motion.mp4
+          ffmpeg -hide_banner -loglevel error -y -f lavfi -i 'smptebars=size=640x360:rate=30' -t 6 -c:v libx264 -preset veryfast -crf 28 -pix_fmt yuv420p -movflags +faststart -an dist/motion-device-qa/sample-second.mp4
+          ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1 dist/motion-device-qa/sample-motion.mp4
+          ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1 dist/motion-device-qa/sample-second.mp4
+      - name: Create shareable ZIP package
+        run: |
+          cd dist
+          zip -q -r motion-device-qa.zip motion-device-qa
+          unzip -t motion-device-qa.zip | tail -n 2
+          ls -lh motion-device-qa.zip
+      - name: Upload a downloadable ZIP for manual device checks
+        uses: actions/upload-artifact@v4
+        with:
+          name: motion-device-qa-kit-2026-11-11
+          path: dist/motion-device-qa.zip
+          retention-days: 30
+          if-no-files-found: error
