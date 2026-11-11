@@ -1,0 +1,43 @@
+name: Aggregate Claude and Cue review reports (free)
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_target:
+    types: [synchronize, reopened]
+    branches: [main]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: ai-review-results-${{ github.event.issue.number || github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    # Only the repo owner's exact /ai-result comments can submit AI reports.
+    # PR updates only refresh an existing ledger, never run paid AI tasks.
+    if: >-
+      github.repository == 'shimamu34/motion' &&
+      (
+        (github.event_name == 'issue_comment' &&
+         github.event.issue.pull_request != null &&
+         github.event.comment.user.login == 'shimamu34' &&
+         startsWith(github.event.comment.body, '/ai-result ')) ||
+        (github.event_name == 'pull_request_target' &&
+         github.event.pull_request.user.login == 'shimamu34')
+      )
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Reconcile owner-submitted reviews with current PR HEAD
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/ai_review_result_ledger.py
