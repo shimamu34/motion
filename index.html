@@ -39,8 +39,11 @@
     width: 100%; height: 100%;
     object-fit: contain;
     border-radius: 10px;
-    background: black;
+    background: transparent;
     pointer-events: none;
+  }
+  video {
+    background: black;
   }
   /* コントロール上段 */
   .controls-top {
@@ -96,6 +99,7 @@
 
 <div id="player" class="player">
   <input type="file" accept="video/*" />
+  <div class="status" role="status" aria-live="polite">モデルを読み込んでいます…</div>
   <div class="video-wrapper">
     <video muted playsinline></video>
     <canvas></canvas>
@@ -128,10 +132,8 @@
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
 <script>
 (async () => {
-  const detector = await poseDetection.createDetector(
-    poseDetection.SupportedModels.MoveNet,
-    { modelType: poseDetection.movenet.modelType.SINGLEPOSE_THUNDER }
-  );
+  let detector = null;
+  let modelState = 'loading';
 
   const FPS = 30;
   const FRAME_TIME = 1 / FPS;
@@ -151,6 +153,8 @@
       this.stickToggle = root.querySelector('.stickToggle');
       this.flipBtn = root.querySelector('.flipBtn');
       this.timeDisplay = root.querySelector('.timeDisplay');
+      this.status = root.querySelector('.status');
+      this.objectUrl = null;
 
       this.poses = [];
       this.isFlipped = false;
@@ -168,6 +172,13 @@
       this.flipBtn.onclick = () => this.toggleFlip();
 
       this.video.onloadedmetadata = () => {
+        if (modelState === 'failed') {
+          this.setStatus('動画を読み込みました。姿勢モデルは使えませんが、動画は操作できます。');
+        } else if (modelState === 'loading') {
+          this.setStatus('動画を読み込みました。姿勢モデルを読み込み中…');
+        } else {
+          this.setStatus('動画を読み込みました。再生できます。');
+        }
         this.canvas.width = this.video.videoWidth;
         this.canvas.height = this.video.videoHeight;
         this.seekBar.max = this.video.duration;
@@ -178,6 +189,10 @@
       this.video.ontimeupdate = () => {
         if (!this.isSeekingFrame) this.seekBar.value = this.video.currentTime;
         this.updateTimeDisplay();
+      };
+
+      this.video.onerror = () => {
+        this.setStatus('動画を読み込めませんでした。対応形式を確認してください。');
       };
 
       this.video.onpause = () => {
@@ -202,6 +217,23 @@
       };
     }
 
+    setStatus(message) {
+      this.status.textContent = message;
+    }
+
+    setModelStatus(message) {
+      this.setStatus(message);
+    }
+
+    playVideo() {
+      const playPromise = this.video.play();
+      if (playPromise && typeof playPromise.catch === 'function') {
+        playPromise.catch(() => {
+          this.setStatus('動画を再生できませんでした。再生ボタンをもう一度押してください。');
+        });
+      }
+    }
+
     toggleFlip() {
       this.isFlipped = !this.isFlipped;
       this.video.style.transform = this.isFlipped ? 'scaleX(-1)' : 'scaleX(1)';
@@ -211,19 +243,28 @@
     loadVideo() {
       const file = this.fileInput.files[0];
       if (!file) return;
-      this.video.src = URL.createObjectURL(file);
+      if (this.objectUrl) {
+        URL.revokeObjectURL(this.objectUrl);
+        this.objectUrl = null;
+      }
+      cancelAnimationFrame(this.animationId);
+      this.video.pause();
+      this.objectUrl = URL.createObjectURL(file);
+      this.video.src = this.objectUrl;
+      this.setStatus('動画を読み込んでいます…');
       this.video.load();
-      this.video.play();
+      this.playVideo();
     }
 
     togglePlay() {
-      if (this.video.paused) this.video.play();
+      if (this.video.paused) this.playVideo();
       else this.video.pause();
     }
 
     async updateFrame() {
+      if (this.video.readyState < 2 || !this.video.videoWidth || !this.video.videoHeight) return;
       this.clearCanvas();
-      if (this.stickToggle.checked) {
+      if (this.stickToggle.checked && detector) {
         this.ctx.fillStyle = "black";
         this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
       } else {
@@ -238,8 +279,9 @@
         cancelAnimationFrame(this.animationId);
         return;
       }
+      if (this.video.readyState < 2 || !this.video.videoWidth || !this.video.videoHeight) return;
       this.clearCanvas();
-      if (this.stickToggle.checked) {
+      if (this.stickToggle.checked && detector) {
         this.ctx.fillStyle = "black";
         this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
       } else {
@@ -271,6 +313,10 @@
     }
 
     async estimatePoses() {
+      if (!detector || !window.poseDetection) {
+        this.poses = [];
+        return;
+      }
       try {
         this.poses = await detector.estimatePoses(this.video);
       } catch (e) {
@@ -283,6 +329,7 @@
       const ctx = this.ctx;
       const scaleX = this.canvas.width / this.video.videoWidth;
       const scaleY = this.canvas.height / this.video.videoHeight;
+      if (!detector || !window.poseDetection) return;
       const adjacentPairs = poseDetection.util.getAdjacentPairs(poseDetection.SupportedModels.MoveNet);
 
       this.poses.forEach(pose => {
@@ -340,7 +387,24 @@
     }
   }
 
-  new Player(document.getElementById("player"));
+  const player = new Player(document.getElementById("player"));
+  try {
+    if (!window.poseDetection || !window.poseDetection.createDetector) {
+      throw new Error('poseDetection is unavailable');
+    }
+    detector = await poseDetection.createDetector(
+      poseDetection.SupportedModels.MoveNet,
+      { modelType: poseDetection.movenet.modelType.SINGLEPOSE_THUNDER }
+    );
+    modelState = 'ready';
+    player.setModelStatus('姿勢モデルを読み込みました。骨格表示を利用できます。');
+    if (!player.video.paused) player.render();
+  } catch (error) {
+    console.error('Pose model loading error:', error);
+    detector = null;
+    modelState = 'failed';
+    player.setModelStatus('姿勢モデルを読み込めません。動画の再生・停止・速度変更・シークは利用できます。');
+  }
 })();
 </script>
 
