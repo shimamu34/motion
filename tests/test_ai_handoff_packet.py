@@ -49,6 +49,12 @@ class PacketTests(unittest.TestCase):
         for term in ["Claude未実行", "Cue未実行", "有料APIは呼んでいません", HEAD, "safe code change"]:
             self.assertIn(term, txt)
 
+    def test_result_registration_instructions_are_head_scoped(self):
+        txt = packet.make_packet(pr(), files(), False)
+        self.assertIn("/ai-result claude " + HEAD, txt)
+        self.assertIn("/ai-result cue " + HEAD, txt)
+        self.assertIn("Claude/Cueから直接送信されたことを証明するものではありません", txt)
+
     def test_patch_is_bounded_and_masks_tokens(self):
         patch_text = "ghp_" + "X" * 30 + "\n" + "x" * 20000
         txt = packet.make_packet(pr(), [{"filename": "x.py", "patch": patch_text}], False)
