@@ -12,11 +12,11 @@ import urllib.error
 import urllib.request
 
 REPOSITORY = "shimamu34/motion"
-WORK_BRANCH = "automation/manus-pr2-compact-review-2026-11-11"
+WORK_BRANCH = "automation/manus-pr2-rereview-2026-11-11"
 PR_NUMBER = 2
 HEAD_BRANCH = "fix/motion-phase1-release-2026-11-11"
-HEAD_SHA = "6134d8191afeef453e1cc817cfa64c3c2bd900c1"
-RECORD_PATH = "reviews/manus-pr2-2026-11-11.md"
+HEAD_SHA = "e19ebdbab3839821467bb6f807f217573f85b436"
+RECORD_PATH = "reviews/manus-pr2-rereview-2026-11-11.md"
 GH_API = f"https://api.github.com/repos/{REPOSITORY}"
 MANUS_API = "https://api.manus.ai/v2"
 MANUS_KEY = os.environ["MANUS_API_KEY"]
@@ -62,7 +62,7 @@ def write_record(content, sha=None):
 def main():
     if os.environ.get("GITHUB_REPOSITORY") != REPOSITORY or os.environ.get("GITHUB_REF_NAME") != WORK_BRANCH:
         raise RuntimeError("Incorrect repository or branch; abort")
-    trigger = open(".github/manus-pr2-2026-11-11.trigger", encoding="utf-8").read()
+    trigger = open(".github/manus-pr2-rereview-2026-11-11.trigger", encoding="utf-8").read()
     if "PR=2" not in trigger or "APPROVED=YES" not in trigger:
         raise RuntimeError("Approval marker absent")
 
@@ -90,7 +90,7 @@ def main():
         "対象: https://github.com/shimamu34/motion/pull/2\n"
         "レビュー対象HEAD: " + HEAD_SHA + "\n"
         "このPRとindex.htmlの変更を独立レビューしてください。GitHub連携からPR全差分と必要な元コードを読めるなら確認してください。\n"
-        "特に、モデル読込失敗時の動画表示、ステータス、Canvasの透明／黒表示、play()エラー、ObjectURLの解放、"
+        "前回の独立レビューでHigh:描画準備前render()停止、Medium:モデルロード完了時の二重ループ、Medium:play()同期例外を発見しました。修正後の新HEADの差分を読み、これら3点が解決しているか重要度・再現条件付きで評価してください。加えてモデル読込失敗時の動画表示、ステータス、Canvasの透明／黒表示、play()エラー、ObjectURLの解放、"
         "通常時のMoveNet Thunder・骨格表示が壊れないことを確認。\n"
         "指摘をCritical/High/Medium/Lowに分類し、具体的なファイル・行・理由・修正案を記載。"
         "読めなかったファイル・未実施のブラウザテストを合格扱いしないでください。\n"
@@ -105,7 +105,7 @@ def main():
     print(f"Task prompt length={len(prompt)} chars, diff={len(diff)} chars, included={len(diff_excerpt)}")
     created = api(f"{MANUS_API}/task.create", "POST", {
         "message": {"content": prompt},
-        "title": "motion PR #2 read-only code review (one approved task)",
+        "title": "motion PR #2 post-fix review for 3 Manus findings (one approved task)",
         "agent_profile": "lite",
         "locale": "ja",
         "interactive_mode": False,
