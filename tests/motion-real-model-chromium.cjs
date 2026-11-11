@@ -82,9 +82,28 @@ async function main(){
   console.log('PASS M1: Real TensorFlow.js and MoveNet Thunder initialized');
   console.log('PASS M2: Actual app called real estimatePoses on synthetic WebM');
   console.log('PASS M3: Inference result was captured without errors');
-  if(probe.arcs>0) console.log('PASS M4: Browser drew detected pose landmark arcs');
-  else console.log('UNVERIFIED M4: No detectable landmarks on non-human geometric fixture');
-  console.log('UNVERIFIED: real-human pose accuracy; iOS Safari; Chromebook');
+  if(probe.arcs>0) console.log('PASS M4: Browser drew detected pose landmark arcs for geometric fixture');
+  else console.log('EXPECTED: geometric fixture did not resemble a real person closely enough to detect');
+
+  // Use TensorFlow's own pose-detection test video (not a student video).
+  const sample=path.join(fixtureDir,'pose-squats.webm');
+  assert.ok(fs.existsSync(sample),'Official pose test movie was not converted');
+  const before=probe.estimates;
+  await page.locator('input[type=file]').setInputFiles(sample);
+  await page.waitForFunction(()=>document.querySelector('video').readyState>=2 &&
+    document.querySelector('video').videoWidth>0,null,{timeout:15000});
+  await page.waitForFunction(prev=>window.__probe?.estimates>prev && window.__probe?.arcs>0,
+    before,{timeout:60000});
+  const realPersonProbe=await page.evaluate(()=>window.__probe);
+  console.log('OFFICIAL_TEST_VIDEO_PROBE '+JSON.stringify(realPersonProbe));
+  assert.ok(realPersonProbe.poses>=1,'No person pose detected in official test video');
+  assert.equal(realPersonProbe.keypoints,17,'Expected MoveNet 17 keypoints');
+  assert.ok(realPersonProbe.maxScore>0.2,'Landmark confidence not enough for app draw threshold');
+  assert.ok(realPersonProbe.arcs>0,'App did not draw any landmark dots');
+  await page.screenshot({path:path.join(fixtureDir,'real-model-person-screen.png'),fullPage:true});
+  console.log('PASS M4: Real MoveNet detected 17 keypoints from official TensorFlow test video');
+  console.log('PASS M5: App drew visible pose landmark arcs using real inference (not a mock)');
+  console.log('UNVERIFIED: pose accuracy for class users; iOS Safari; Chromebook; timing precision');
  } finally { await browser.close(); }
 }
 main().catch(e=>{console.error('REAL_MODEL_TEST_FAILED: '+(e.stack||e));process.exitCode=1;});
