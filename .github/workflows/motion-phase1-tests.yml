@@ -10,6 +10,7 @@ on:
   push:
     branches:
       - fix/motion-phase1-release-2026-11-11
+      - fix/motion-pr2-review-remediation-2026-11-11
     paths:
       - index.html
       - tests/motion-phase1.test.js
