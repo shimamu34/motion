@@ -1,0 +1,53 @@
+name: Diagnose AI handoff PR comment write permission (free)
+
+on:
+  push:
+    branches:
+      - test/ai-handoff-comment-permissions-2026-11-11
+    paths:
+      - .github/workflows/ai-comment-permission-diagnostic.yml
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  post-test-comment:
+    if: github.repository == 'shimamu34/motion'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 4
+    steps:
+      - name: Check authenticated PR comment creation with safe error output
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import json, os, urllib.request, urllib.error
+          url = "https://api.github.com/repos/shimamu34/motion/issues/6/comments"
+          marker = "<!-- ai-handoff-permission-diagnostic-2026-11-11 -->"
+          headers = {
+             "Authorization": "Bearer " + os.environ["GH_TOKEN"],
+             "Accept": "application/vnd.github+json",
+             "X-GitHub-Api-Version": "2022-11-28",
+             "Content-Type": "application/json",
+             "User-Agent": "ai-handoff-permission-diagnostic"
+          }
+          query = urllib.request.Request(url+"?per_page=100", headers=headers)
+          try:
+              existing = json.load(urllib.request.urlopen(query, timeout=30))
+          except urllib.error.HTTPError as e:
+              print("COMMENT_READ_ERROR",e.code,e.read().decode("utf-8")[:500]);raise
+          if any(marker in (x.get("body") or "") for x in existing):
+              print("ALREADY_POSTED");raise SystemExit(0)
+          content = {"body": marker + "\nGitHub ActionsのPRコメント書込権限テスト。**Manus・Claude・Cueは起動しません**。"}
+          req = urllib.request.Request(url,data=json.dumps(content,ensure_ascii=False).encode(),headers=headers,method="POST")
+          try:
+              response=urllib.request.urlopen(req, timeout=30)
+              data=json.load(response)
+              print("POST_OK",response.status,data.get("id"),data.get("user",{}).get("login"))
+          except urllib.error.HTTPError as e:
+              print("COMMENT_WRITE_ERROR",e.code, e.read().decode("utf-8",errors="replace")[:900])
+              print("ACCEPTED_PERMISSIONS",e.headers.get("x-accepted-github-permissions",""))
+              raise
+          PY
