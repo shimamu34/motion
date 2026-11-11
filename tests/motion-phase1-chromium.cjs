@@ -63,18 +63,30 @@ async function main() {
     await page.waitForFunction(() => document.querySelector('video').currentTime > 0.15, { timeout: 10000 });
     passed.push('B2: synthetic WebM local file plays in Chromium without pose model');
 
-    // Ensure overlay canvas is not covering a moving video with a black rectangle.
+    // A transparent canvas is VALID when the video beneath it is visible.
+    // Check actual composite pixels from the browser screenshot, not canvas alone.
     await page.waitForTimeout(200);
-    const pixels = await page.evaluate(() => {
-      const canvas = document.querySelector('canvas');
-      const ctx = canvas.getContext('2d');
-      const img = ctx.getImageData(Math.floor(canvas.width / 2), Math.floor(canvas.height / 2), 1, 1).data;
-      return Array.from(img);
+    const screenshot = await page.locator('.video-wrapper').screenshot({
+      path: path.resolve(__dirname, 'fixtures', 'browser-fallback.png'),
     });
-    assert.ok(pixels[0] + pixels[1] + pixels[2] > 35, 'video canvas pixel unexpectedly black: ' + pixels);
+    const pixels = await page.evaluate(async (base64) => {
+      const img = new Image();
+      img.src = 'data:image/png;base64,' + base64;
+      await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; });
+      const surface = document.createElement('canvas');
+      surface.width = img.naturalWidth;
+      surface.height = img.naturalHeight;
+      const ctx = surface.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+      return Array.from(ctx.getImageData(
+        Math.floor(surface.width / 2), Math.floor(surface.height / 2), 1, 1,
+      ).data);
+    }, screenshot.toString('base64'));
+    assert.ok(pixels[0] > 80 && pixels[0] > pixels[1] + 40,
+      'actual composite screenshot is not visibly red video: ' + pixels);
     const warning = await page.locator('.status').innerText();
     assert.match(warning, /姿勢モデル/);
-    passed.push('B3: fallback canvas displays nonblack video pixels and warning remains visible');
+    passed.push('B3: actual Chromium screenshot displays red video and preserves model warning');
 
     await page.locator('.playpause').click();
     assert.equal(await page.locator('video').evaluate(v => v.paused), true);
