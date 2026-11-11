@@ -39,3 +39,13 @@ Cueの`developer`がPRを読み、最小差分でレビューし、GitHubの`/ai
 ## 次の確認ゲート
 
 GitHubにSkillを配置した後、ユーザーがCue`developer`のSkill設定画面を開き、**CueでSkillを追加する操作が使えるかを1回確認**する。確認前に「CueにSkillを適用済み」「完全自動化済み」とは主張しない。
+
+
+## 2026-11-12 Manus主担当・Cue補助担当への整理
+
+- 開発の中心は現行Manus。Cue `developer`は独立した開発軸ではなく、GitHub PRの差分を確認し、**Manusに渡す修正案・テスト案を作る補助担当**とする。
+- PR作成時の引き継ぎパケットがManus補助向けCue依頼文を自動生成する。Cueが実際に起動するわけではない。
+- Cueの返答は、利用者が確認して機密情報を除いたうえで`/ai-result cue <HEAD SHA>`としてPRに登録できる。既存のGitHub Actionsが結果を台帳化する。Manusはその記録を参考に作業を進める。
+- Cue `developer`はManusと別アカウントのため、現在のManus APIキーから自動起動することは**未成立**。別アカウントのAPIキーを転用しない。
+- Manus/Cueのクレジットを使った起動、Cueからの自動GitHub書込み、Manusへの完全自動引き継ぎは、この変更では実施していない。
+- 読取専用の定時テストPR #14は変更・マージしない。
