@@ -71,6 +71,8 @@ class PacketTests(unittest.TestCase):
         self.assertIn("ref: main", wf)
         self.assertIn("persist-credentials: false", wf)
         self.assertNotIn("MANUS_API_KEY", wf)
+        self.assertIn("issues: write", wf)
+        self.assertIn("pull-requests: write", wf)
 
 
 class MockGitHub(unittest.TestCase):
