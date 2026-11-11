@@ -1,0 +1,23 @@
+name: Validate motion Phase-1 offline behavior
+
+on:
+  push:
+    branches:
+      - fix/motion-startup-resilience
+    paths:
+      - index.html
+      - tests/motion-phase1.test.js
+      - .github/workflows/motion-phase1-tests.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run independent Node VM regression checks
+        run: node tests/motion-phase1.test.js
