@@ -39,6 +39,18 @@ jobs:
           except Exception as err:
               print("MANUS_AGENT_LIST_TRANSPORT_FAILURE", type(err).__name__)
               raise SystemExit(1)
+          if isinstance(obj, dict):
+              print("RESPONSE_TOP_LEVEL_FIELDS", sorted(obj.keys())[:20])
+              print("RESPONSE_OK_FIELD", repr(obj.get("ok")))
+              print("RESPONSE_DATA_TYPE", type(obj.get("data")).__name__)
+              if isinstance(obj.get("data"), dict):
+                  print("RESPONSE_DATA_FIELDS", sorted(obj["data"].keys())[:20])
+              error = obj.get("error")
+              if isinstance(error, dict):
+                  code = str(error.get("code", ""))
+                  print("ERROR_CODE", re.sub(r"[^a-zA-Z0-9_.-]", "", code)[:60])
+          else:
+              print("RESPONSE_ROOT_TYPE", type(obj).__name__)
           if not isinstance(obj, dict) or obj.get("ok") is not True or not isinstance(obj.get("data"), list):
               print("MANUS_AGENT_LIST_UNEXPECTED_RESPONSE")
               raise SystemExit(1)
