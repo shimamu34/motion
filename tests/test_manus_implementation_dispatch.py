@@ -126,6 +126,13 @@ class ApprovalContractTests(unittest.TestCase):
         self.assertIn("PR作成、マージ、デプロイ", text)
         self.assertNotIn("MANUS_API_KEY", text)
 
+    def test_manus_prompt_requests_checkpoint_without_new_paid_tasks(self):
+        prompt = m.prompt_for(pr(), "feature/message-fix", BODY)
+        self.assertIn("翌日再開メモ", prompt)
+        self.assertIn("未完了・未確認", prompt)
+        self.assertIn("勝手に追加の有料タスクを作らず", prompt)
+        self.assertIn("承認された作業ブランチのみ", prompt)
+
     def test_disabled_flag_calls_nothing(self):
         with patch.object(m, "github") as gh, patch.object(m, "create_manus_task") as ai:
             self.assertEqual(m.dispatch(event(), {**ENV, "ENABLE_MANUS_IMPLEMENTATION": ""}), "DISABLED")
