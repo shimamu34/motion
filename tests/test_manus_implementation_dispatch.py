@@ -164,6 +164,56 @@ class ApprovalContractTests(unittest.TestCase):
         self.assertEqual(len([x for x in gh.writes() if x[1] == "POST"]), 1)
         self.assertEqual(len([x for x in gh.writes() if x[1] == "PATCH"]), 1)
 
+    def test_valid_cue_developer_report_link_is_handed_to_manus(self):
+        cue_report = {"id": 9876, "user": {"login": "shimamu34"},
+                      "body": "/ai-result cue " + SHA
+                              + "\n【Cue developerのレビュー結果】\n根拠と最小修正案。"}
+        gh = FakeGitHub(comments=[cue_report])
+        prompts = []
+        with patch.object(m, "github", side_effect=gh), \
+             patch.object(m, "create_manus_task", side_effect=lambda payload:
+                          (prompts.append(payload["message"]["content"]) or
+                           {"ok": True, "task_id": "ABCDE12345"})):
+            self.assertEqual(m.dispatch(event(), ENV), "DISPATCHED")
+        self.assertEqual(len(prompts), 1)
+        self.assertIn("https://github.com/shimamu34/motion/pull/17#issuecomment-9876",
+                      prompts[0])
+        self.assertIn("Manus", prompts[0])
+        self.assertNotIn("根拠と最小修正案。", prompts[0])
+
+    def test_wrong_head_other_agent_and_nonowner_reports_are_ignored(self):
+        fake_reports = [
+            {"id": 100, "user": {"login": "shimamu34"},
+             "body": "/ai-result cue " + OTHER + "\n【Cue developerのレビュー結果】\n旧SHAのレビュー"},
+            {"id": 101, "user": {"login": "somebody"},
+             "body": "/ai-result cue " + SHA + "\n【Cue developerのレビュー結果】\n他人のレビュー"},
+            {"id": 102, "user": {"login": "shimamu34"},
+             "body": "/ai-result cue " + SHA + "\n【ほかのCueエージェントの結果】\n対象外"},
+        ]
+        gh = FakeGitHub(comments=fake_reports)
+        prompts = []
+        with patch.object(m, "github", side_effect=gh), \
+             patch.object(m, "create_manus_task", side_effect=lambda payload:
+                          (prompts.append(payload["message"]["content"]) or
+                           {"ok": True, "task_id": "ABCDE12345"})):
+            self.assertEqual(m.dispatch(event(), ENV), "DISPATCHED")
+        self.assertEqual(len(prompts), 1)
+        self.assertIn("最新HEAD向け提案は登録されていません", prompts[0])
+        for bad_id in (100, 101, 102):
+            self.assertNotIn("issuecomment-" + str(bad_id), prompts[0])
+
+    def test_latest_owner_cue_report_is_preferred(self):
+        gh = FakeGitHub(comments=[
+            {"id": 500, "user": {"login": "shimamu34"},
+             "body": "/ai-result cue " + SHA + "\n【Cue developerのレビュー結果】\n案1"},
+            {"id": 501, "user": {"login": "shimamu34"},
+             "body": "/ai-result cue " + SHA + "\n【Cue developerのレビュー結果】\n案2"},
+        ])
+        with patch.object(m, "github", side_effect=gh):
+            reservation, link = m.previous_reservation_and_cue_link(NUMBER, m.reservation_marker(NUMBER, SHA), SHA)
+        self.assertIsNone(reservation)
+        self.assertEqual(link, "https://github.com/shimamu34/motion/pull/17#issuecomment-501")
+
     @staticmethod
     def track_gh(gh, events, path, method="GET", payload=None):
         if method == "POST":
