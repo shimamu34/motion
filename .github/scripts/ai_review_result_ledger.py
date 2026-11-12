@@ -109,7 +109,7 @@ def review_entries(comments, sha):
     return entries, previous_ledger
 
 
-def ledger_text(number, head, entries):
+def ledger_text(number, head, entries, merged=False):
     url = f"https://github.com/{REPO}/pull/{number}"
     lines = [
         MARKER,
@@ -117,6 +117,8 @@ def ledger_text(number, head, entries):
         "",
         f"- 対象PR: {url}",
         f"- 現在のHEAD: {head}",
+        f"- PR状態: {'マージ済み（事後登録可能）' if merged else 'オープン'}",
+        "- **マージ後のレビュー登録は事後記録です。マージ前のレビュー・承認を証明しません。**",
         "- **これはユーザーがGitHubに登録した報告の集約であり、Claude/Cueの実行や出所を認証したものではありません。**",
         "- 各AIへの直接API送信やManusのタスク作成は行っていません。",
         "",
@@ -167,8 +169,13 @@ def main():
         pinned_sha = (event["pull_request"].get("head") or {}).get("sha")
 
     pr = github(f"/pulls/{number}")
-    if pr.get("state") != "open" or pr.get("merged") or (pr.get("base") or {}).get("ref") != "main":
-        print("SKIP: PR is not open against main")
+    # A completed PR can receive a *retrospective* owner-submitted review.
+    # Closed-unmerged PRs remain ineligible; this never approves or merges code.
+    pr_open = pr.get("state") == "open" and pr.get("merged") is False
+    pr_merged = pr.get("state") == "closed" and pr.get("merged") is True
+    if (pr.get("base") or {}).get("ref") != "main" or not (
+            pr_open or (event_type == "issue_comment" and pr_merged)):
+        print("SKIP: PR is neither open nor an owner-submitted review of a merged PR against main")
         return
     if (pr.get("user") or {}).get("login") != OWNER:
         print("SKIP: PR author is not repository owner")
@@ -185,7 +192,7 @@ def main():
     if event_type == "pull_request_target" and previous is None:
         print("SKIP: no result ledger to update after new commit")
         return
-    body = ledger_text(number, head, entries)
+    body = ledger_text(number, head, entries, merged=pr_merged)
     if previous:
         if previous.get("body") == body:
             print("UNCHANGED: current result ledger")
