@@ -71,6 +71,15 @@ class PacketTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             packet.make_packet(pr("bad-sha"), files(), False)
 
+    def test_manus_resume_packet_is_head_scoped_and_no_paid_tasks(self):
+        txt = packet.make_packet(pr(), files(), False)
+        self.assertIn("Manus翌日再開パケット", txt)
+        self.assertIn("生成時点のHEAD: " + HEAD, txt)
+        self.assertIn("保存済み作業ブランチ: feature/video", txt)
+        self.assertIn("完了／未完了／未確認", txt)
+        self.assertIn("追加課金", txt)
+        self.assertIn("自動検出したことを意味しません", txt)
+
     def test_workflow_executes_only_trusted_main(self):
         wf = (SOURCE.parent.parent / "workflows/ai-review-handoff.yml").read_text("utf-8")
         self.assertIn("pull_request_target:", wf)
