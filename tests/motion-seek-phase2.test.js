@@ -31,7 +31,7 @@ async function boot({ model = false, deferredPose = false } = {}) {
   const video = {
     paused: true, ended: false, readyState: 4,
     videoWidth: 640, videoHeight: 360,
-    currentTime: 0, duration: 8,
+    currentTime: 0, duration: 8, seeking: false,
     playbackRate: 1, style: {},
     load() {},
     pause() {
@@ -211,6 +211,22 @@ async function flush() {
     x.video.onseeked();
     await flush();
     assert.ok(painted(x.draws).includes('video'), 'latest seeked event must repaint');
+  });
+
+  await check('bounded seeked time quantization completes only after seeking ends', async () => {
+    const x = await boot();
+    x.elems['.seek'].value = 1 / 30;
+    x.elems['.seek'].oninput();
+    x.video.currentTime = 0.033;
+    x.video.seeking = true;
+    x.video.onseeked();
+    await flush();
+    assert.deepEqual(painted(x.draws), [], 'an event while media is still seeking must not complete');
+    x.video.seeking = false;
+    x.video.onseeked();
+    await flush();
+    assert.ok(painted(x.draws).includes('video'),
+      'a bounded media-time quantization difference may complete after seeking ends');
   });
 
   await check('stale asynchronous pose results are discarded after a new seek', async () => {

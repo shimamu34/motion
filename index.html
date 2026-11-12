@@ -137,6 +137,7 @@
 
   const FPS = 30;
   const FRAME_TIME = 1 / FPS;
+  const SEEK_TIME_TOLERANCE = Math.min(FRAME_TIME / 4, 0.005);
 
   class Player {
     constructor(root) {
@@ -219,7 +220,8 @@
 
       this.video.onseeked = () => {
         if (!this.isSeekingFrame || this.seekTargetTime === null) return;
-        if (Math.abs(this.video.currentTime - this.seekTargetTime) > 0.000001) return;
+        const timeDelta = Math.abs(this.video.currentTime - this.seekTargetTime);
+        if (this.video.seeking === true || timeDelta > SEEK_TIME_TOLERANCE) return;
         const requestId = this.seekRequestId;
         const mediaGeneration = this.mediaGeneration;
         this.isSeekingFrame = false;
