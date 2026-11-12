@@ -22,7 +22,7 @@ REQUEST_MARKER = "<!-- manus-implementation-request:v1 -->"
 MAX_BODY = 3000
 MAX_PAGES = 10
 CUE_DEVELOPER_LABEL = "【Cue developerのレビュー結果】"
-CUE_RESULT_PREFIX = re.compile(r"\\A/ai-result[ \\t]+cue[ \\t]+([0-9a-f]{40})[ \\t]*\\n")
+CUE_RESULT_PREFIX = re.compile(r"\A/ai-result[ \t]+cue[ \t]+([0-9a-f]{40})[ \t]*\n")
 MAX_CUE_RESULT_LENGTH = 24120
 
 
@@ -148,7 +148,7 @@ def previous_reservation_and_cue_link(pr_number, marker, approved_sha):
                 return item, None
             if login != OWNER or not isinstance(body, str):
                 continue
-            clean_body = body.replace("\\r\\n", "\\n")
+            clean_body = body.replace("\r\n", "\n")
             if len(clean_body) > MAX_CUE_RESULT_LENGTH:
                 continue
             match = CUE_RESULT_PREFIX.match(clean_body)
