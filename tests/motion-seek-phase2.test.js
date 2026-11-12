@@ -12,8 +12,10 @@ const code = scripts.map(match => match[1]).filter(Boolean).at(-1);
 assert.ok(code && code.includes('class Player'), 'Player script not found');
 new vm.Script(code);
 
-async function boot({ model = false } = {}) {
+async function boot({ model = false, deferredPose = false } = {}) {
   const draws = [];
+  let rafCalls = 0;
+  const poseResolvers = [];
   const ctx = {
     clearRect: () => draws.push('clear'),
     drawImage: () => draws.push('video'),
@@ -22,7 +24,7 @@ async function boot({ model = false } = {}) {
     moveTo() {},
     lineTo() {},
     stroke() {},
-    arc() {},
+    arc: () => draws.push('pose'),
     fill() {}
   };
   const video = {
@@ -59,7 +61,12 @@ async function boot({ model = false } = {}) {
   const pose = model ? {
     SupportedModels: { MoveNet: 'MoveNet' },
     movenet: { modelType: { SINGLEPOSE_THUNDER: 'THUNDER' } },
-    createDetector: async () => ({ estimatePoses: async () => [] }),
+    createDetector: async () => ({
+      estimatePoses: async () => {
+        if (!deferredPose) return [];
+        return new Promise(resolve => poseResolvers.push(resolve));
+      }
+    }),
     util: { getAdjacentPairs: () => [] }
   } : undefined;
   const root = { querySelector: selector => {
@@ -71,12 +78,20 @@ async function boot({ model = false } = {}) {
     poseDetection: pose,
     document: { getElementById: () => root },
     URL: { createObjectURL: () => 'blob:synthetic', revokeObjectURL() {} },
-    requestAnimationFrame: () => 1,
+    requestAnimationFrame: () => ++rafCalls,
     cancelAnimationFrame() {},
     console: { error() {} }
   };
   await vm.runInNewContext(code, context);
-  return { video, elems, draws, ctx };
+  return {
+    video, elems, draws, ctx,
+    get rafCalls() { return rafCalls; },
+    resolvePose: (poses = []) => {
+      const resolve = poseResolvers.shift();
+      assert.ok(resolve, 'a pose inference must be pending');
+      resolve(poses);
+    }
+  };
 }
 
 function painted(draws) {
@@ -156,6 +171,104 @@ async function flush() {
     x.video.onseeked();
     await flush();
     assert.ok(painted(x.draws).includes('black'), 'stick canvas should redraw after seeked');
+  });
+
+  await check('play during a pending seek does not start an early or duplicate loop', async () => {
+    const x = await boot();
+    x.elems['.seek'].value = 2;
+    x.elems['.seek'].oninput();
+    x.video.play();
+    await flush();
+    assert.deepEqual(painted(x.draws), [], 'play must not paint before seeked');
+    assert.equal(x.rafCalls, 0, 'play must not start a render loop before seeked');
+    x.video.onseeked();
+    await flush();
+    assert.equal(x.rafCalls, 1, 'seek completion must start exactly one loop');
+    const paintsAfterSeek = painted(x.draws).length;
+    x.video.onplay();
+    await flush();
+    assert.equal(x.rafCalls, 1, 'repeated play must not create another loop');
+    assert.equal(painted(x.draws).length, paintsAfterSeek, 'repeated play must not repaint immediately');
+  });
+
+  await check('stale seeked events do not complete the latest seek', async () => {
+    const x = await boot();
+    x.elems['.seek'].value = 2;
+    x.elems['.seek'].oninput();
+    x.elems['.seek'].value = 5;
+    x.elems['.seek'].oninput();
+    x.video.currentTime = 2;
+    x.video.onseeked();
+    await flush();
+    assert.deepEqual(painted(x.draws), [], 'old seeked event must be ignored');
+    x.video.currentTime = 5;
+    x.video.onseeked();
+    await flush();
+    assert.ok(painted(x.draws).includes('video'), 'latest seeked event must repaint');
+  });
+
+  await check('stale asynchronous pose results are discarded after a new seek', async () => {
+    const x = await boot({ model: true, deferredPose: true });
+    const pose = [{ keypoints: [{ x: 1, y: 1, score: 1 }] }];
+    x.elems['.seek'].value = 2;
+    x.elems['.seek'].oninput();
+    x.video.onseeked();
+    await flush();
+    x.elems['.seek'].value = 4;
+    x.elems['.seek'].oninput();
+    x.resolvePose(pose);
+    await flush();
+    assert.equal(x.draws.filter(value => value === 'pose').length, 0,
+      'pose result from the previous seek must not be drawn');
+    x.video.onseeked();
+    await flush();
+    x.resolvePose(pose);
+    await flush();
+    await flush();
+    assert.equal(x.draws.filter(value => value === 'pose').length, 1,
+      'pose result for the current seek may be drawn');
+  });
+
+  await check('stale asynchronous pose results are discarded after video switching', async () => {
+    const x = await boot({ model: true, deferredPose: true });
+    const pose = [{ keypoints: [{ x: 1, y: 1, score: 1 }] }];
+    x.elems['.seek'].value = 2;
+    x.elems['.seek'].oninput();
+    x.video.onseeked();
+    await flush();
+    x.elems['input[type=file]'].files = [{ name: 'replacement.mp4' }];
+    x.elems['input[type=file]'].onchange();
+    x.resolvePose(pose);
+    await flush();
+    await flush();
+    assert.equal(x.draws.filter(value => value === 'pose').length, 0,
+      'pose result from the previous video must not be drawn');
+  });
+
+  await check('same-time boundary seeks and video switching clear pending state', async () => {
+    const x = await boot();
+    x.elems['.seek'].value = 0;
+    x.elems['.seek'].oninput();
+    await flush();
+    x.video.play();
+    await flush();
+    assert.ok(x.rafCalls > 0, 'a no-op seek must not block playback');
+
+    const boundary = await boot();
+    boundary.video.currentTime = 8;
+    boundary.elems['.seek'].value = 8;
+    boundary.elems['.seek'].oninput();
+    boundary.video.play();
+    await flush();
+    assert.ok(boundary.rafCalls > 0, 'an end-time no-op seek must not block playback');
+
+    const y = await boot();
+    y.elems['.seek'].value = 2;
+    y.elems['.seek'].oninput();
+    y.elems['input[type=file]'].files = [{ name: 'replacement.mp4' }];
+    y.elems['input[type=file]'].onchange();
+    await flush();
+    assert.ok(y.rafCalls > 0, 'video switching must clear pending seek state');
   });
 
   console.log('Ran ' + passed + ' Phase-2 offline seek timing checks');
