@@ -1,6 +1,13 @@
 name: Test free Claude/Cue result collection
 
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/ai-review-result-ledger.yml
+      - .github/scripts/ai_review_result_ledger.py
+      - tests/test_ai_review_result_ledger.py
+      - .github/workflows/ai-review-ledger-tests.yml
   push:
     branches:
       - feature/ai-review-result-ledger-2026-11-11
