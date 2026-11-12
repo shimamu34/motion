@@ -42,9 +42,9 @@ def update_event(sha=SHA_A, author="shimamu34"):
     }
 
 
-def pr(head=SHA_A):
+def pr(head=SHA_A, state="open", merged=False):
     return {
-        "number": 8, "state": "open", "merged": False,
+        "number": 8, "state": state, "merged": merged,
         "base": {"ref": "main"},
         "user": {"login": "shimamu34"},
         "head": {"sha": head},
@@ -222,6 +222,51 @@ class MockFullFlow(unittest.TestCase):
         with patch.dict(os.environ, self.env), patch.object(ledger, "github", return_value=pr(SHA_B)) as api:
             ledger.main()
         self.assertEqual(api.call_count, 1)
+
+    def test_merged_pr_accepts_late_owner_report_as_retrospective(self):
+        self.event_file.write_text(
+            json.dumps(comment_event(body=submission("cue"))), encoding="utf-8"
+        )
+        writes = []
+
+        def api(path, method="GET", payload=None):
+            if path == "/pulls/8":
+                return pr(state="closed", merged=True)
+            if path.startswith("/issues/8/comments?"):
+                return [review_comment(37, "cue")]
+            if path == "/issues/8/comments" and method == "POST":
+                writes.append(payload["body"])
+                return {"id": 201}
+            raise AssertionError((path, method))
+
+        with patch.dict(os.environ, self.env), patch.object(ledger, "github", side_effect=api):
+            ledger.main()
+        self.assertEqual(len(writes), 1)
+        self.assertIn("マージ済み", writes[0])
+        self.assertIn("事後記録", writes[0])
+        self.assertIn("#issuecomment-37", writes[0])
+
+    def test_closed_unmerged_pr_rejects_owner_report(self):
+        with patch.dict(os.environ, self.env), patch.object(
+            ledger, "github", return_value=pr(state="closed", merged=False)
+        ) as api:
+            ledger.main()
+        self.assertEqual(api.call_count, 1)
+
+    def test_merged_pr_rejects_stale_head(self):
+        with patch.dict(os.environ, self.env), patch.object(
+            ledger, "github", return_value=pr(SHA_B, state="closed", merged=True)
+        ) as api:
+            ledger.main()
+        self.assertEqual(api.call_count, 1)
+
+    def test_merged_pr_does_not_accept_untrusted_actor(self):
+        self.event_file.write_text(
+            json.dumps(comment_event(author="stranger")), encoding="utf-8"
+        )
+        with patch.dict(os.environ, self.env), patch.object(ledger, "github") as api:
+            ledger.main()
+        api.assert_not_called()
 
     def test_wrong_actor_does_not_access_github(self):
         self.event_file.write_text(json.dumps(comment_event(author="stranger")), encoding="utf-8")
