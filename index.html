@@ -161,6 +161,7 @@
       this.animationId = null;
 
       this.isSeekingFrame = false;
+      this.seekRequestId = 0;
 
       this.fileInput.onchange = () => this.loadVideo();
       this.playBtn.onclick = () => this.togglePlay();
@@ -198,7 +199,7 @@
       this.video.onpause = () => {
         this.playBtn.textContent = "再生 ▶️";
         cancelAnimationFrame(this.animationId);
-        this.updateFrame();
+        if (!this.isSeekingFrame) this.updateFrame();
       };
 
       this.video.onplay = () => {
@@ -209,10 +210,12 @@
       this.video.onseeked = () => {
         if (this.isSeekingFrame) {
           this.isSeekingFrame = false;
-          this.updateFrame();
-          if (!this.video.paused) {
-            this.render();
-          }
+          const requestId = this.seekRequestId;
+          Promise.resolve().then(() => {
+            if (requestId !== this.seekRequestId || this.isSeekingFrame) return;
+            this.updateFrame();
+            if (!this.video.paused) this.render();
+          });
         }
       };
     }
@@ -302,8 +305,9 @@
     }
 
     frameStep(direction) {
-      if (!this.video.paused) this.video.pause();
       this.isSeekingFrame = true;
+      this.seekRequestId += 1;
+      if (!this.video.paused) this.video.pause();
       let targetTime = this.video.currentTime + direction * FRAME_TIME;
       if (targetTime < 0) targetTime = 0;
       if (targetTime > this.video.duration) targetTime = this.video.duration;
@@ -311,10 +315,10 @@
     }
 
     seek() {
+      this.isSeekingFrame = true;
+      this.seekRequestId += 1;
       if (!this.video.paused) this.video.pause();
-      this.isSeekingFrame = false;
       this.video.currentTime = this.seekBar.value;
-      this.updateFrame();
     }
 
     changeSpeed() {
