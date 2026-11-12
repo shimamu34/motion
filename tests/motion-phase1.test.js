@@ -118,6 +118,51 @@ async function boot({ model = false, modelReject = false, modelDelay = false } =
     assert.ok(x.calls.includes('drawImage'));
     assert.ok(!x.calls.includes('fillRect'));
   });
+  await check('Delayed model download failure preserves guidance and video controls', async () => {
+    const x = await boot({ modelReject: true, modelDelay: true });
+    const flush = async () => {
+      for (let i = 0; i < 6; i++) await Promise.resolve();
+    };
+    x.elements['input[type=file]'].files = [{ name: 'demo.mp4' }];
+    x.elements['input[type=file]'].onchange();
+    await flush();
+    assert.equal(x.video.paused, false, 'video starts while the model is loading');
+
+    await x.finishModel();
+    assert.match(x.status.textContent, /姿勢モデルを読み込めません/);
+    assert.match(x.status.textContent, /再生・停止・速度変更・シークは利用できます/);
+    assert.equal(x.video.paused, false, 'model failure must not interrupt playback');
+    x.calls.length = 0;
+    assert.ok(x.rafs.length > 0, 'playback has a queued render frame');
+    await x.rafs.shift()();
+    assert.ok(x.calls.includes('drawImage'), 'playback still paints video after failure');
+    assert.ok(!x.calls.includes('fillRect'), 'failed model must not hide video');
+
+    x.video.onloadedmetadata();
+    assert.match(x.status.textContent, /姿勢モデルは使えませんが、動画は操作できます/);
+    const warning = x.status.textContent;
+    x.elements['.playpause'].onclick();
+    await flush();
+    assert.equal(x.video.paused, true, 'pause control remains usable');
+    x.elements['.speed'].value = '0.5';
+    x.elements['.speed'].onchange();
+    assert.equal(x.video.playbackRate, 0.5, 'speed control remains usable');
+
+    x.calls.length = 0;
+    x.elements['.seek'].value = 2.5;
+    x.elements['.seek'].oninput();
+    assert.equal(x.video.currentTime, 2.5, 'seek control still changes media time');
+    x.video.onseeked();
+    await flush();
+    assert.ok(x.calls.includes('drawImage'), 'seek completion paints the video');
+    assert.ok(!x.calls.includes('fillRect'), 'seek must preserve visible video');
+    x.calls.length = 0;
+    x.elements['.playpause'].onclick();
+    await flush();
+    assert.equal(x.video.paused, false, 'play control resumes after seeking');
+    assert.ok(x.calls.includes('drawImage'), 'resumed playback paints video');
+    assert.equal(x.status.textContent, warning, 'controls preserve the failure guidance');
+  });
   await check('Model failure warning persists after video metadata', async () => {
     const x = await boot();
     x.video.onloadedmetadata();
