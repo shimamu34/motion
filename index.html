@@ -137,6 +137,7 @@
 
   const FPS = 30;
   const FRAME_TIME = 1 / FPS;
+  const SEEK_TIME_TOLERANCE = Math.min(FRAME_TIME / 4, 0.005);
 
   class Player {
     constructor(root) {
@@ -161,6 +162,13 @@
       this.animationId = null;
 
       this.isSeekingFrame = false;
+      this.seekRequestId = 0;
+      this.seekTargetTime = null;
+      this.mediaGeneration = 0;
+      this.renderLoopId = 0;
+      this.renderLoopRunning = false;
+      this.frameUpdateInFlight = null;
+      this.isLoadingVideo = false;
 
       this.fileInput.onchange = () => this.loadVideo();
       this.playBtn.onclick = () => this.togglePlay();
@@ -192,28 +200,43 @@
       };
 
       this.video.onerror = () => {
+        this.isSeekingFrame = false;
+        this.seekTargetTime = null;
+        this.seekRequestId += 1;
         this.setStatus('動画を読み込めませんでした。対応形式を確認してください。');
       };
 
       this.video.onpause = () => {
         this.playBtn.textContent = "再生 ▶️";
-        cancelAnimationFrame(this.animationId);
-        this.updateFrame();
+        this.stopRenderLoop();
+        if (!this.isSeekingFrame && !this.isLoadingVideo) this.updateFrame();
       };
 
       this.video.onplay = () => {
         this.playBtn.textContent = "一時停止 ⏸️";
-        this.render();
+        if (this.isSeekingFrame || this.frameUpdateInFlight) return;
+        this.startRenderLoop();
       };
 
       this.video.onseeked = () => {
-        if (this.isSeekingFrame) {
-          this.isSeekingFrame = false;
-          this.updateFrame();
-          if (!this.video.paused) {
-            this.render();
+        if (!this.isSeekingFrame || this.seekTargetTime === null) return;
+        const timeDelta = Math.abs(this.video.currentTime - this.seekTargetTime);
+        if (this.video.seeking === true || timeDelta > SEEK_TIME_TOLERANCE) return;
+        const requestId = this.seekRequestId;
+        const mediaGeneration = this.mediaGeneration;
+        this.isSeekingFrame = false;
+        this.seekTargetTime = null;
+        const updatePromise = this.updateFrame();
+        const trackedUpdate = updatePromise.finally(() => {
+          if (this.frameUpdateInFlight !== trackedUpdate) return;
+          this.frameUpdateInFlight = null;
+          if (requestId === this.seekRequestId &&
+              mediaGeneration === this.mediaGeneration &&
+              !this.isSeekingFrame && !this.video.paused) {
+            this.startRenderLoop({ immediate: false });
           }
-        }
+        });
+        this.frameUpdateInFlight = trackedUpdate;
       };
     }
 
@@ -247,16 +270,23 @@
     loadVideo() {
       const file = this.fileInput.files[0];
       if (!file) return;
+      this.isLoadingVideo = true;
+      this.isSeekingFrame = false;
+      this.seekTargetTime = null;
+      this.seekRequestId += 1;
+      this.mediaGeneration += 1;
+      this.stopRenderLoop();
+      this.frameUpdateInFlight = null;
       if (this.objectUrl) {
         URL.revokeObjectURL(this.objectUrl);
         this.objectUrl = null;
       }
-      cancelAnimationFrame(this.animationId);
       this.video.pause();
       this.objectUrl = URL.createObjectURL(file);
       this.video.src = this.objectUrl;
       this.setStatus('動画を読み込んでいます…');
       this.video.load();
+      this.isLoadingVideo = false;
       this.playVideo();
     }
 
@@ -267,6 +297,8 @@
 
     async updateFrame() {
       if (this.video.readyState < 2 || !this.video.videoWidth || !this.video.videoHeight) return;
+      const requestId = this.seekRequestId;
+      const mediaGeneration = this.mediaGeneration;
       this.clearCanvas();
       if (this.stickToggle.checked && detector) {
         this.ctx.fillStyle = "black";
@@ -274,18 +306,34 @@
       } else {
         this.ctx.drawImage(this.video, 0, 0, this.canvas.width, this.canvas.height);
       }
-      await this.estimatePoses();
+      const poses = await this.estimatePoses();
+      if (requestId !== this.seekRequestId || mediaGeneration !== this.mediaGeneration) return;
+      this.poses = poses;
       this.drawAllPoses();
     }
 
-    async render() {
-      if (this.video.paused || this.video.ended) {
+    startRenderLoop({ immediate = true } = {}) {
+      if (this.isSeekingFrame || this.frameUpdateInFlight || this.renderLoopRunning) return;
+      this.renderLoopRunning = true;
+      this.renderLoopId += 1;
+      if (immediate) this.render(this.renderLoopId);
+      else this.animationId = requestAnimationFrame(() => this.render(this.renderLoopId));
+    }
+
+    stopRenderLoop() {
+      this.renderLoopRunning = false;
+      this.renderLoopId += 1;
+      cancelAnimationFrame(this.animationId);
+    }
+
+    async render(loopId = this.renderLoopId) {
+      if (loopId !== this.renderLoopId || this.isSeekingFrame || this.video.paused || this.video.ended) {
         cancelAnimationFrame(this.animationId);
         return;
       }
       if (this.video.readyState < 2 || !this.video.videoWidth || !this.video.videoHeight) {
         if (!this.video.paused && !this.video.ended) {
-          this.animationId = requestAnimationFrame(() => this.render());
+          this.animationId = requestAnimationFrame(() => this.render(loopId));
         }
         return;
       }
@@ -296,25 +344,52 @@
       } else {
         this.ctx.drawImage(this.video, 0, 0, this.canvas.width, this.canvas.height);
       }
-      await this.estimatePoses();
+      const requestId = this.seekRequestId;
+      const mediaGeneration = this.mediaGeneration;
+      const poses = await this.estimatePoses();
+      if (loopId !== this.renderLoopId || requestId !== this.seekRequestId ||
+          mediaGeneration !== this.mediaGeneration || this.isSeekingFrame || this.video.paused) return;
+      this.poses = poses;
       this.drawAllPoses();
-      this.animationId = requestAnimationFrame(() => this.render());
+      this.animationId = requestAnimationFrame(() => this.render(loopId));
     }
 
     frameStep(direction) {
-      if (!this.video.paused) this.video.pause();
-      this.isSeekingFrame = true;
       let targetTime = this.video.currentTime + direction * FRAME_TIME;
       if (targetTime < 0) targetTime = 0;
       if (targetTime > this.video.duration) targetTime = this.video.duration;
+      if (Math.abs(targetTime - this.video.currentTime) <= 0.000001) {
+        this.isSeekingFrame = false;
+        this.seekTargetTime = null;
+        this.seekRequestId += 1;
+        if (!this.video.paused) this.video.pause();
+        else this.updateFrame();
+        return;
+      }
+      this.isSeekingFrame = true;
+      this.seekTargetTime = targetTime;
+      this.seekRequestId += 1;
+      this.stopRenderLoop();
+      if (!this.video.paused) this.video.pause();
       this.video.currentTime = targetTime;
     }
 
     seek() {
+      const targetTime = Number(this.seekBar.value);
+      if (Math.abs(targetTime - this.video.currentTime) <= 0.000001) {
+        this.isSeekingFrame = false;
+        this.seekTargetTime = null;
+        this.seekRequestId += 1;
+        if (!this.video.paused) this.video.pause();
+        else this.updateFrame();
+        return;
+      }
+      this.isSeekingFrame = true;
+      this.seekTargetTime = targetTime;
+      this.seekRequestId += 1;
+      this.stopRenderLoop();
       if (!this.video.paused) this.video.pause();
-      this.isSeekingFrame = false;
-      this.video.currentTime = this.seekBar.value;
-      this.updateFrame();
+      this.video.currentTime = targetTime;
     }
 
     changeSpeed() {
@@ -323,14 +398,13 @@
 
     async estimatePoses() {
       if (!detector || !window.poseDetection) {
-        this.poses = [];
-        return;
+        return [];
       }
       try {
-        this.poses = await detector.estimatePoses(this.video);
+        return await detector.estimatePoses(this.video);
       } catch (e) {
         console.error("Pose detection error:", e);
-        this.poses = [];
+        return [];
       }
     }
 

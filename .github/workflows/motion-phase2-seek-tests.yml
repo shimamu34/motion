@@ -1,0 +1,26 @@
+name: Test motion Phase-2 seek timing (offline, no AI API)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - index.html
+      - tests/motion-seek-phase2.test.js
+      - tests/motion-phase1.test.js
+      - .github/workflows/motion-phase2-seek-tests.yml
+
+permissions:
+  contents: read
+
+jobs:
+  seek-regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Phase-1 regression
+        run: node tests/motion-phase1.test.js
+      - name: Phase-2 seek timing (fake browser only)
+        run: node tests/motion-seek-phase2.test.js
