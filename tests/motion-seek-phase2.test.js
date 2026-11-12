@@ -15,6 +15,7 @@ new vm.Script(code);
 async function boot({ model = false, deferredPose = false } = {}) {
   const draws = [];
   let rafCalls = 0;
+  const rafCallbacks = [];
   const poseResolvers = [];
   const ctx = {
     clearRect: () => draws.push('clear'),
@@ -78,7 +79,10 @@ async function boot({ model = false, deferredPose = false } = {}) {
     poseDetection: pose,
     document: { getElementById: () => root },
     URL: { createObjectURL: () => 'blob:synthetic', revokeObjectURL() {} },
-    requestAnimationFrame: () => ++rafCalls,
+    requestAnimationFrame: callback => {
+      rafCallbacks.push(callback);
+      return ++rafCalls;
+    },
     cancelAnimationFrame() {},
     console: { error() {} }
   };
@@ -86,6 +90,8 @@ async function boot({ model = false, deferredPose = false } = {}) {
   return {
     video, elems, draws, ctx,
     get rafCalls() { return rafCalls; },
+    get pendingPoseCount() { return poseResolvers.length; },
+    runRaf: index => rafCallbacks[index](),
     resolvePose: (poses = []) => {
       const resolve = poseResolvers.shift();
       assert.ok(resolve, 'a pose inference must be pending');
@@ -243,6 +249,45 @@ async function flush() {
     await flush();
     assert.equal(x.draws.filter(value => value === 'pose').length, 0,
       'pose result from the previous video must not be drawn');
+  });
+
+  await check('video switching starts the new render while old inference is pending', async () => {
+    const x = await boot({ model: true, deferredPose: true });
+    x.video.play();
+    await flush();
+    assert.equal(x.pendingPoseCount, 1, 'the first video inference must be pending');
+    x.elems['input[type=file]'].files = [{ name: 'replacement.mp4' }];
+    x.elems['input[type=file]'].onchange();
+    await flush();
+    assert.equal(x.pendingPoseCount, 2,
+      'the new video must start inference even while the old one is pending');
+    x.resolvePose([]);
+    await flush();
+    assert.equal(x.draws.filter(value => value === 'pose').length, 0,
+      'the old video inference must remain undisplayed');
+    x.resolvePose([]);
+  });
+
+  await check('stopped unready render retries cannot revive an old loop', async () => {
+    const x = await boot();
+    x.video.readyState = 0;
+    x.video.videoWidth = 0;
+    x.video.videoHeight = 0;
+    x.video.paused = false;
+    x.video.onplay();
+    assert.equal(x.rafCalls, 1, 'unready playback must queue one retry');
+    x.elems['input[type=file]'].files = [{ name: 'replacement.mp4' }];
+    x.elems['input[type=file]'].onchange();
+    x.video.readyState = 4;
+    x.video.videoWidth = 640;
+    x.video.videoHeight = 360;
+    x.runRaf(0);
+    await flush();
+    assert.equal(painted(x.draws).length, 0,
+      'the old unready callback must not paint the new video');
+    x.runRaf(1);
+    await flush();
+    assert.ok(painted(x.draws).length > 0, 'the new video callback must paint');
   });
 
   await check('same-time boundary seeks and video switching clear pending state', async () => {
