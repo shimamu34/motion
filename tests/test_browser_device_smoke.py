@@ -46,7 +46,7 @@ class DeviceSmokeContractTest(unittest.TestCase):
         self.assertTrue({
             "videoFile", "video", "play", "seek", "frame",
             "speed", "flip", "model", "infer", "copy", "reset", "report",
-            "poseOverlay", "poseState", "follow"
+            "poseOverlay", "poseState", "follow", "syncFrame", "timeline", "timelineTime"
         }.issubset(self.parsed.ids))
 
     def test_original_application_unchanged_and_dependencies_match(self):
@@ -57,7 +57,7 @@ class DeviceSmokeContractTest(unittest.TestCase):
     def test_movenet_thunder_matches_original(self):
         for token in ("poseDetection.SupportedModels.MoveNet",
                       "poseDetection.movenet.modelType.SINGLEPOSE_THUNDER",
-                      "detector.estimatePoses(video)"):
+                      "detector.estimatePoses(manual ? video : snapshotCanvas)"):
             self.assertIn(token, self.page)
         self.assertIn("poseDetection.movenet.modelType.SINGLEPOSE_THUNDER", self.app)
 
@@ -88,13 +88,13 @@ class DeviceSmokeContractTest(unittest.TestCase):
 
     def test_pose_overlay_renders_on_video_with_confidence_and_bones(self):
         self.assertIn('<canvas id="poseOverlay"', self.page)
-        self.assertIn('function drawPoseOverlay(poses)', self.page)
+        self.assertIn('function drawPoseOverlay(poses, sourceWidth', self.page)
         self.assertIn('ctx.lineTo(', self.page)
         self.assertIn('ctx.stroke()', self.page)
         self.assertIn('ctx.arc(', self.page)
         self.assertIn('const minConfidence = 0.2', self.page)
         self.assertIn('video.clientWidth, height = video.clientHeight', self.page)
-        self.assertIn('Math.min(width / video.videoWidth, height / video.videoHeight)', self.page)
+        self.assertIn('Math.min(width / sourceWidth, height / sourceHeight)', self.page)
 
     def test_visualization_does_not_claim_success_without_a_person(self):
         self.assertIn('pose_visualization: "NOT_TESTED"', self.page)
@@ -105,6 +105,7 @@ class DeviceSmokeContractTest(unittest.TestCase):
     def test_flip_keeps_video_and_overlay_aligned(self):
         self.assertIn('video.style.transform = transform;', self.page)
         self.assertIn('overlay.style.transform = transform;', self.page)
+        self.assertIn('syncFrame.style.transform = transform;', self.page)
         self.assertIn('pointer-events:none', self.page)
 
     def test_pose_overlay_tracks_frames_and_clears_on_navigation(self):
@@ -123,10 +124,20 @@ class DeviceSmokeContractTest(unittest.TestCase):
 
     def test_continuous_pose_has_single_throttled_raf_loop(self):
         for token in ('function scheduleFollow()', 'requestAnimationFrame(async () => {',
-                      'followMinIntervalMs = 330', 'if (inferenceBusy || !detector || !playable()) return;',
+                      'followMinIntervalMs = 50', 'if (inferenceBusy || !detector || !playable()) return;',
                       'await inferPose(false)', 'function stopFollowing()', 'cancelAnimationFrame(',
-                      'pose_follow_updates', 'pose_follow_poses_found'):
+                      'pose_follow_updates', 'pose_follow_poses_found',
+                      'captureVideoSnapshot()', 'showSynchronizedFrame()',
+                      'pose_follow_last_inference_ms', 'pose_follow_video_lag_ms'):
             self.assertIn(token, self.page)
+
+    def test_pose_and_rendered_frame_share_the_same_snapshot(self):
+        self.assertIn('snapshotContext.drawImage(video, 0, 0, width, height)', self.page)
+        self.assertIn('detector.estimatePoses(manual ? video : snapshotCanvas)', self.page)
+        self.assertIn('drawPoseOverlay(poses, snapshotCanvas.width, snapshotCanvas.height)', self.page)
+        self.assertIn('syncFrame.hidden = false;', self.page)
+        self.assertIn('video.paused || video.seeking || lag > 1.5', self.page)
+        self.assertIn('pose_follow_stale_drops', self.page)
 
     def test_no_implied_real_world_success(self):
         self.assertIn("NOT_TESTED", self.page)
