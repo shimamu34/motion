@@ -111,7 +111,8 @@ class DeviceSmokeContractTest(unittest.TestCase):
         for token in ('video.addEventListener("play"', 'video.addEventListener("seeked"',
                       'video.addEventListener("emptied"', 'clearOverlay()'):
             self.assertIn(token, self.page)
-        self.assertIn('VideoFrameChangedDuringInference', self.page)
+        self.assertIn('record("pose_visualization", "STALE_FRAME")', self.page)
+        self.assertIn('generation !== currentGeneration || (!manual && !following)', self.page)
 
     def test_sensitive_movenet_diagnostic_is_separate_from_production(self):
         self.assertIn('minPoseScore = 0.10', self.page)
