@@ -17,6 +17,8 @@ button,select { border-radius:8px; border:1px solid #687d95; background:#253950;
 button:disabled { opacity:.45; cursor:not-allowed; }
 button:focus-visible, select:focus-visible, input:focus-visible { outline:3px solid #84d6fa; }
 video { display:block; background:#000; max-width:100%; width:100%; max-height:55vh; border-radius:8px; }
+.video-stage { position:relative; width:100%; }
+#poseOverlay { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; border-radius:8px; }
 pre { white-space:pre-wrap; word-break:break-word; font-size:.83rem; background:#07101d; padding:12px; border-radius:8px; }
 a { color:#8bdcff; } .pass { color:#8dedb0; } .fail { color:#ff9e9e; }
 </style>
@@ -30,7 +32,8 @@ a { color:#8bdcff; } .pass { color:#8dedb0; } .fail { color:#ff9e9e; }
 <h2>1. 動画を選択</h2>
 <label for="videoFile">端末内のテスト動画（MP4推奨）</label>
 <input type="file" id="videoFile" accept="video/*">
-<video id="video" playsinline muted controls preload="metadata"></video>
+<div class="video-stage"><video id="video" playsinline muted controls preload="metadata"></video><canvas id="poseOverlay" aria-hidden="true"></canvas></div>
+<p id="poseState" role="status" aria-live="polite">姿勢推定後、人物が検出できれば水色の骨格線と白い関節点を表示します。</p>
 <p id="mediaState" role="status" aria-live="polite">動画は未選択です。</p>
 <button type="button" id="play">再生／停止</button>
 <button type="button" id="seek">中間へシーク</button>
@@ -41,7 +44,7 @@ a { color:#8bdcff; } .pass { color:#8dedb0; } .fail { color:#ff9e9e; }
 </div>
 <div class="panel">
 <h2>2. 姿勢モデルを実測</h2>
-<p class="small">本番アプリと同じTensorFlow.js 4.15.0とpose-detectionのMoveNet Thunderを使用します。モデルのダウンロードや初回推定は時間がかかる場合があります。モデル取得が失敗しても動画操作テストは続けられます。</p>
+<p class="small">本番アプリと同じTensorFlow.js 4.15.0とpose-detectionのMoveNet Thunderを使用します。全身が映る場面で動画を一時停止してから姿勢推定してください。骨格線は推定した静止フレームにのみ表示し、再生・シークすると消えます。モデル取得が失敗しても動画操作テストは続けられます。</p>
 <button type="button" id="model">MoveNet Thunderを読み込む</button>
 <button type="button" id="infer" disabled>現在の映像で姿勢推定</button>
 <p id="modelState" role="status" aria-live="polite">姿勢モデルは未確認です。</p>
@@ -65,6 +68,8 @@ a { color:#8bdcff; } .pass { color:#8dedb0; } .fail { color:#ff9e9e; }
   const report = byId("report");
   const mediaState = byId("mediaState");
   const modelState = byId("modelState");
+  const overlay = byId("poseOverlay");
+  const poseState = byId("poseState");
   const outcome = {
     test: "motion-local-device-smoke-v1",
     video_decoding: "NOT_TESTED",
@@ -74,7 +79,8 @@ a { color:#8bdcff; } .pass { color:#8dedb0; } .fail { color:#ff9e9e; }
     playback_speed: "NOT_TESTED",
     horizontal_flip: "NOT_TESTED",
     movenet_thunder_load: "NOT_TESTED",
-    movenet_thunder_inference: "NOT_TESTED"
+    movenet_thunder_inference: "NOT_TESTED",
+    pose_visualization: "NOT_TESTED"
   };
   let objectUrl = null;
   let detector = null;
@@ -82,6 +88,66 @@ a { color:#8bdcff; } .pass { color:#8dedb0; } .fail { color:#ff9e9e; }
   let modelBusy = false;
   let inferenceBusy = false;
   let currentGeneration = 0;
+  const bones = [[5,6],[5,7],[7,9],[6,8],[8,10],[5,11],[6,12],
+    [11,12],[11,13],[13,15],[12,14],[14,16]];
+  const minConfidence = 0.3;
+
+  function clearOverlay() {
+    const ctx = overlay.getContext("2d");
+    if (ctx) {
+      ctx.setTransform(1,0,0,1,0,0);
+      ctx.clearRect(0,0,overlay.width,overlay.height);
+    }
+  }
+
+  function drawPoseOverlay(poses) {
+    clearOverlay();
+    const ctx = overlay.getContext("2d");
+    const points = poses[0] && poses[0].keypoints;
+    const width = video.clientWidth, height = video.clientHeight;
+    if (!ctx || !Array.isArray(points) || !width || !height || !video.videoWidth || !video.videoHeight) {
+      return { visible:0, segments:0 };
+    }
+    const dpr = Math.min(Math.max(window.devicePixelRatio || 1, 1), 2);
+    overlay.width = Math.round(width * dpr);
+    overlay.height = Math.round(height * dpr);
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    const scale = Math.min(width / video.videoWidth, height / video.videoHeight);
+    const offsetX = (width - video.videoWidth * scale) / 2;
+    const offsetY = (height - video.videoHeight * scale) / 2;
+    const mapPoint = point => {
+      if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y) ||
+          !(Number(point.score) >= minConfidence)) return null;
+      return {x:offsetX + point.x * scale, y:offsetY + point.y * scale};
+    };
+    const mapped = points.map(mapPoint);
+    let segments = 0;
+    ctx.lineWidth = 3;
+    ctx.lineCap = "round";
+    ctx.strokeStyle = "#58d9f8";
+    for (const [a,b] of bones) {
+      if (!mapped[a] || !mapped[b]) continue;
+      ctx.beginPath();
+      ctx.moveTo(mapped[a].x, mapped[a].y);
+      ctx.lineTo(mapped[b].x, mapped[b].y);
+      ctx.stroke();
+      segments++;
+    }
+    ctx.fillStyle = "#ffffff";
+    let visible = 0;
+    for (const point of mapped) {
+      if (!point) continue;
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, 4, 0, Math.PI * 2);
+      ctx.fill();
+      visible++;
+    }
+    return {visible, segments};
+  }
+
+  video.addEventListener("play", () => { clearOverlay(); poseState.textContent = "再生中です。骨格を確認するには一時停止して姿勢推定してください。"; });
+  video.addEventListener("seeked", () => { clearOverlay(); poseState.textContent = "移動先のフレームで、もう一度姿勢推定してください。"; });
+  video.addEventListener("emptied", clearOverlay);
 
   function record(key, value, detail) {
     outcome[key] = value;
@@ -123,6 +189,9 @@ a { color:#8bdcff; } .pass { color:#8dedb0; } .fail { color:#ff9e9e; }
   byId("videoFile").addEventListener("change", () => {
     const file = byId("videoFile").files && byId("videoFile").files[0];
     currentGeneration += 1;
+    clearOverlay();
+    poseState.textContent = "全身が映るフレームを選んで姿勢推定してください。";
+    record("pose_visualization", "NOT_TESTED");
     video.pause();
     video.removeAttribute("src");
     video.load();
@@ -182,7 +251,9 @@ a { color:#8bdcff; } .pass { color:#8dedb0; } .fail { color:#ff9e9e; }
   });
   byId("flip").addEventListener("click", () => {
     mirrored = !mirrored;
-    video.style.transform = mirrored ? "scaleX(-1)" : "none";
+    const transform = mirrored ? "scaleX(-1)" : "none";
+    video.style.transform = transform;
+    overlay.style.transform = transform;
     record("horizontal_flip", "PASS");
   });
   byId("model").addEventListener("click", async () => {
@@ -221,11 +292,31 @@ a { color:#8bdcff; } .pass { color:#8dedb0; } .fail { color:#ff9e9e; }
     inferenceBusy = true;
     byId("infer").disabled = true;
     try {
+      video.pause();
+      const generation = currentGeneration, timestamp = video.currentTime;
       const poses = await detector.estimatePoses(video);
-      // A valid empty pose list means inference executed; the person may be out of frame.
       if (!Array.isArray(poses)) throw new Error("InvalidPoseResult");
+      if (generation !== currentGeneration || Math.abs(timestamp - video.currentTime) > .05) {
+        throw new Error("VideoFrameChangedDuringInference");
+      }
       record("movenet_thunder_inference", "PASS", poses.length > 0 ? "PosesFound" : "NoPosesInFrame");
-    } catch (error) { fail("movenet_thunder_inference", error); }
+      if (!poses.length) {
+        clearOverlay();
+        record("pose_visualization", "NO_POSE");
+        poseState.textContent = "推定処理は成功しましたが人物は0人です。全身が映る明るいフレームに移動して再度押してください。";
+      } else {
+        const {visible, segments} = drawPoseOverlay(poses);
+        record("pose_visualization", segments > 0 ? "PASS" : "NO_VISIBLE_SKELETON");
+        poseState.textContent = segments > 0
+          ? `骨格線を表示しました（関節点${visible}個、線${segments}本）。静止フレームでの結果です。`
+          : "姿勢候補はありますが、線を描くための関節が足りません。全身が映る別フレームで再試行してください。";
+      }
+    } catch (error) {
+      clearOverlay();
+      record("pose_visualization", "NOT_TESTED");
+      fail("movenet_thunder_inference", error);
+      poseState.textContent = "姿勢推定エラーです。動画の選択・モデルの読み込みを確認してください。";
+    }
     finally { inferenceBusy = false; byId("infer").disabled = false; }
   });
   byId("copy").addEventListener("click", async () => {
@@ -237,9 +328,12 @@ a { color:#8bdcff; } .pass { color:#8dedb0; } .fail { color:#ff9e9e; }
       if (k !== "test") delete outcome[k];
     });
     for (const k of ["video_decoding","video_play_pause","video_seek","frame_approx_30fps",
-      "playback_speed","horizontal_flip","movenet_thunder_load","movenet_thunder_inference"]) {
+      "playback_speed","horizontal_flip","movenet_thunder_load","movenet_thunder_inference",
+      "pose_visualization"]) {
       outcome[k] = "NOT_TESTED";
     }
+    clearOverlay();
+    poseState.textContent = "診断をリセットしました。";
     render();
   });
   window.addEventListener("pagehide", () => {
