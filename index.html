@@ -124,6 +124,7 @@
 
   <div class="controls-bottom">
     <label><input type="checkbox" class="stickToggle" checked /> スティックピクチャー化</label>
+    <label title="通常映像はブラウザで滑らかに再生します。骨格表示は少し遅れる場合があります。"><input type="checkbox" class="smoothVideoToggle" /> 映像なめらか（遅延の可能性あり）</label>
     <button class="flipBtn">左右反転 ↔️</button>
   </div>
 </div>
@@ -152,6 +153,7 @@
       this.seekBar = root.querySelector('.seek');
       this.speedSel = root.querySelector('.speed');
       this.stickToggle = root.querySelector('.stickToggle');
+      this.smoothVideoToggle = root.querySelector('.smoothVideoToggle');
       this.flipBtn = root.querySelector('.flipBtn');
       this.timeDisplay = root.querySelector('.timeDisplay');
       this.status = root.querySelector('.status');
@@ -177,7 +179,14 @@
       this.frameForwardBtn.onclick = () => this.frameStep(1);
       this.seekBar.oninput = () => this.seek();
       this.speedSel.onchange = () => this.changeSpeed();
-      this.stickToggle.onchange = () => { if (this.video.paused) this.updateFrame(); };
+      const refreshDisplayMode = () => {
+        // Instantly remove an opaque synced snapshot when switching modes.
+        // The next inference will repaint the requested style with fresh pose data.
+        this.clearCanvas();
+        if (this.video.paused && !this.isSeekingFrame) this.updateFrame();
+      };
+      this.stickToggle.onchange = refreshDisplayMode;
+      this.smoothVideoToggle.onchange = refreshDisplayMode;
       this.flipBtn.onclick = () => this.toggleFlip();
 
       this.video.onloadedmetadata = () => {
@@ -339,9 +348,13 @@
       if (this.stickToggle.checked && detector) {
         this.ctx.fillStyle = 'black';
         this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-      } else {
+      } else if (!this.smoothVideoToggle.checked || !detector) {
+        // SYNC: retain the exact frame paired with this MoveNet inference.
         this.ctx.drawImage(frame || this.video, 0, 0, this.canvas.width, this.canvas.height);
       }
+      // SMOOTH (opt-in): leave this canvas transparent so the native <video>
+      // below can play at its natural cadence. Skeleton coordinates are from
+      // the latest completed inference; some temporal lag is unavoidable.
     }
 
     async updateFrame() {
