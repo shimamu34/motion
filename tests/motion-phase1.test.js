@@ -15,6 +15,8 @@ async function boot({ model = false, modelReject = false, modelDelay = false, po
   const poseInputs = [];
   const displayedFrames = [];
   const capturedFrames = [];
+  const modelConfigs = [];
+  const disposedModels = [];
   const revoked = [];
   const rafs = [];
   let resolveModel;
@@ -61,6 +63,8 @@ async function boot({ model = false, modelReject = false, modelDelay = false, po
     '.speed': { value: '1' },
     '.stickToggle': { checked: true },
     '.smoothVideoToggle': { checked: false },
+    '.poseModelSelect': { value: 'THUNDER', disabled: true },
+    '.posePerf': { textContent: '' },
     '.flipBtn': button(),
     '.timeDisplay': { textContent: '' },
     '.status': status
@@ -71,15 +75,21 @@ async function boot({ model = false, modelReject = false, modelDelay = false, po
   }};
   const pose = model || modelReject ? {
     SupportedModels: { MoveNet: 'MoveNet' },
-    movenet: { modelType: { SINGLEPOSE_THUNDER: 'Thunder' } },
+    movenet: { modelType: { SINGLEPOSE_THUNDER: 'Thunder', SINGLEPOSE_LIGHTNING: 'Lightning' } },
     util: { getAdjacentPairs: () => [] },
-    createDetector: async () => {
-      if (modelDelay) await new Promise(resolve => { resolveModel = resolve; });
+    createDetector: async (_, config) => {
+      modelConfigs.push(config);
+      if (modelDelay && modelConfigs.length === 1) {
+        await new Promise(resolve => { resolveModel = resolve; });
+      }
       if (modelReject) throw Error('blocked weights');
-      return { estimatePoses: async source => {
-        poseInputs.push(source);
-        return poseOnEstimate ? await poseOnEstimate(source) : [];
-      } };
+      return {
+        dispose() { disposedModels.push(config.modelType); },
+        estimatePoses: async source => {
+          poseInputs.push(source);
+          return poseOnEstimate ? await poseOnEstimate(source) : [];
+        }
+      };
     }
   } : undefined;
   const context = {
@@ -109,6 +119,7 @@ async function boot({ model = false, modelReject = false, modelDelay = false, po
   const bootPromise = vm.runInNewContext(code, context);
   if (!modelDelay) await bootPromise;
   return { calls, revoked, video, status, elements, rafs, poseInputs, displayedFrames, capturedFrames,
+    modelConfigs, disposedModels,
     finishModel: async () => { if (resolveModel) resolveModel(); await bootPromise; } };
 }
 
@@ -335,6 +346,50 @@ const flushMicrotasks = async () => {
     await flushMicrotasks();
     assert.equal(x.poseInputs[0].width, 640);
     assert.equal(x.poseInputs[0].height, 360);
+  });
+
+  await check('Thunder stays the default until user explicitly selects Lightning', async () => {
+    const x = await boot({ model: true });
+    assert.equal(x.modelConfigs.length, 1);
+    assert.equal(x.modelConfigs[0].modelType, 'Thunder');
+    assert.equal(x.elements['.poseModelSelect'].disabled, false);
+    x.elements['.poseModelSelect'].value = 'LIGHTNING';
+    x.elements['.poseModelSelect'].onchange();
+    await flushMicrotasks();
+    assert.equal(x.modelConfigs.length, 2);
+    assert.equal(x.modelConfigs[1].modelType, 'Lightning');
+    assert.equal(x.disposedModels.length, 1);
+    assert.equal(x.disposedModels[0], 'Thunder');
+    assert.equal(x.elements['.poseModelSelect'].disabled, false);
+    assert.match(x.status.textContent, /Lightning/);
+    x.elements['.poseModelSelect'].value = 'THUNDER';
+    x.elements['.poseModelSelect'].onchange();
+    await flushMicrotasks();
+    assert.equal(x.modelConfigs.at(-1).modelType, 'Thunder');
+    assert.equal(x.disposedModels.at(-1), 'Lightning');
+  });
+
+  await check('Replacing pose model waits for an in-flight estimate before disposing it', async () => {
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    let estimates = 0;
+    const x = await boot({ model: true, poseOnEstimate: async () => {
+      if (++estimates === 1) await gate;
+      return [];
+    } });
+    x.video.paused = false;
+    x.video.onplay();
+    await flushMicrotasks();
+    assert.equal(estimates, 1);
+    x.elements['.poseModelSelect'].value = 'LIGHTNING';
+    x.elements['.poseModelSelect'].onchange();
+    await flushMicrotasks();
+    assert.equal(x.disposedModels.length, 0, 'model stays alive until inference finishes');
+    release();
+    await flushMicrotasks();
+    assert.equal(x.disposedModels.length, 1);
+    assert.equal(x.modelConfigs[1].modelType, 'Lightning');
+    assert.equal(x.elements['.poseModelSelect'].disabled, false);
   });
 
   console.log('Ran ' + count + ' Phase-1 offline checks');
