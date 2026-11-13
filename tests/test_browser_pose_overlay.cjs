@@ -349,3 +349,113 @@ test('stopping during inference prevents out-of-date snapshot repaint', async ()
   assert.equal(app.drawn.synchronizedDraws, 0);
   assert.equal(app.pendingFrames, 0);
 });
+
+test('pausing live tracking refreshes and retains the exact paused skeleton', async () => {
+  const points = Array.from({length:17}, (_,i)=>({x:i*10+20,y:i*8+15,score:.95}));
+  const app = setup([{keypoints:points}]);
+  app.elements.videoFile.files = [{type:'video/mp4'}];
+  app.elements.videoFile.listeners.change();
+  app.elements.video.listeners.loadeddata();
+  await app.elements.model.listeners.click();
+  app.elements.follow.listeners.click();
+  await app.elements.video.play();
+  app.elements.video.listeners.play();
+  await app.tick();
+  const before = app.estimateCalls;
+  app.elements.video.pause();
+  app.elements.video.listeners.pause();
+  await new Promise(resolve => setImmediate(resolve));
+  const report = JSON.parse(app.elements.report.textContent);
+  assert.equal(report.pose_follow, 'ON');
+  assert.equal(report.pose_visualization, 'PASS');
+  assert.equal(report.pose_visualization_reset_reason, 'NONE');
+  assert.equal(report.pose_visualization_points, 17);
+  assert.equal(report.pose_visualization_segments, 12);
+  assert.equal(app.estimateCalls, before + 1);
+  assert.equal(app.inputSeen, app.elements.video, 'paused frame must be inferred from video, not an old snapshot');
+  assert.equal(app.elements.syncFrame.hidden, true);
+  assert.equal(app.pendingFrames, 0);
+});
+
+test('pause waits for in-flight tracking inference before refreshing, without parallel inference', async () => {
+  let release;
+  let concurrent = 0, maxConcurrent = 0, calls = 0;
+  const gate = new Promise(resolve => { release = resolve; });
+  const points = Array.from({length:17}, (_,i)=>({x:i*9+10,y:i*7+20,score:.95}));
+  const app = setup([{keypoints:points}], async () => {
+    calls++;
+    concurrent++;
+    maxConcurrent = Math.max(maxConcurrent, concurrent);
+    if (calls === 1) await gate;
+    concurrent--;
+  });
+  app.elements.videoFile.files = [{type:'video/mp4'}];
+  app.elements.videoFile.listeners.change();
+  app.elements.video.listeners.loadeddata();
+  await app.elements.model.listeners.click();
+  app.elements.follow.listeners.click();
+  await app.elements.video.play();
+  app.elements.video.listeners.play();
+  const pending = app.tick();
+  app.elements.video.pause();
+  app.elements.video.listeners.pause();
+  assert.equal(JSON.parse(app.elements.report.textContent).pose_visualization_reset_reason, 'PAUSE');
+  assert.equal(app.estimateCalls, 1);
+  release();
+  await pending;
+  await new Promise(resolve => setImmediate(resolve));
+  const report = JSON.parse(app.elements.report.textContent);
+  assert.equal(maxConcurrent, 1);
+  assert.equal(app.estimateCalls, 2);
+  assert.equal(report.pose_visualization, 'PASS');
+  assert.equal(report.pose_follow, 'ON');
+  assert.equal(app.elements.syncFrame.hidden, true);
+});
+
+test('stopping tracking during an in-flight paused refresh does not redraw obsolete skeleton', async () => {
+  let release;
+  const gate = new Promise(resolve => {release = resolve;});
+  let calls = 0;
+  const points = Array.from({length:17}, (_,i)=>({x:i*9+10,y:i*7+20,score:.98}));
+  const app = setup([{keypoints:points}], async () => {
+    if (++calls === 2) await gate;
+  });
+  app.elements.videoFile.files = [{type:'video/mp4'}];
+  app.elements.videoFile.listeners.change();
+  app.elements.video.listeners.loadeddata();
+  await app.elements.model.listeners.click();
+  app.elements.follow.listeners.click();
+  await app.elements.video.play();
+  app.elements.video.listeners.play();
+  await app.tick();
+  app.elements.video.pause();
+  app.elements.video.listeners.pause();
+  assert.equal(app.estimateCalls, 2);
+  const before = app.drawn.strokes;
+  app.elements.follow.listeners.click();
+  release();
+  await new Promise(resolve => setImmediate(resolve));
+  const report = JSON.parse(app.elements.report.textContent);
+  assert.equal(report.pose_follow, 'OFF');
+  assert.equal(report.pose_visualization, 'NOT_TESTED');
+  assert.equal(report.pose_visualization_reset_reason, 'TRACKING_STOPPED');
+  assert.equal(app.drawn.strokes, before);
+});
+
+test('manual inference during playback does not get wiped by its deferred pause event', async () => {
+  const points = Array.from({length:17}, (_,i)=>({x:i*10+9,y:i*8+10,score:.95}));
+  const app = setup([{keypoints:points}]);
+  app.elements.videoFile.files = [{type:'video/mp4'}];
+  app.elements.videoFile.listeners.change();
+  app.elements.video.listeners.loadeddata();
+  await app.elements.model.listeners.click();
+  app.elements.follow.listeners.click();
+  await app.elements.video.play();
+  app.elements.video.listeners.play();
+  const pending = app.elements.infer.listeners.click();
+  app.elements.video.listeners.pause(); // Browser dispatches media pause asynchronously.
+  await pending;
+  const report = JSON.parse(app.elements.report.textContent);
+  assert.equal(report.pose_visualization, 'PASS');
+  assert.equal(app.estimateCalls, 1);
+});
