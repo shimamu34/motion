@@ -120,6 +120,9 @@ a { color:#8bdcff; } .pass { color:#8dedb0; } .fail { color:#ff9e9e; }
   let lastManualPose = null;
   let lastManualTime = null;
   let lastManualGeneration = -1;
+  let pauseRefreshPending = false;
+  let trackingSession = 0;
+  let suppressNextPauseRefresh = false;
   const minPoseScore = 0.10;
   const bones = [[5,6],[5,7],[7,9],[6,8],[8,10],[5,11],[6,12],
     [11,12],[11,13],[13,15],[12,14],[14,16]];
@@ -232,6 +235,8 @@ a { color:#8bdcff; } .pass { color:#8dedb0; } .fail { color:#ff9e9e; }
 
   function stopFollowing() {
     following = false;
+    trackingSession += 1;
+    pauseRefreshPending = false;
     if (followFrameId !== null) {
       cancelAnimationFrame(followFrameId);
       followFrameId = null;
@@ -241,6 +246,17 @@ a { color:#8bdcff; } .pass { color:#8dedb0; } .fail { color:#ff9e9e; }
     markVisualizationReset("TRACKING_STOPPED");
     byId("follow").textContent = "骨格追跡を開始（再生中も表示）";
     record("pose_follow", "OFF");
+  }
+
+  function requestPausedRefresh() {
+    if (!following || !detector || !playable() || !video.paused || video.seeking || video.ended) return;
+    // Never run two MoveNet inferences concurrently. If an animated frame is
+    // still processing, refresh the exact paused frame when it finishes.
+    pauseRefreshPending = true;
+    if (!inferenceBusy) {
+      pauseRefreshPending = false;
+      void inferPose(true, true);
+    }
   }
 
   function scheduleFollow() {
@@ -271,6 +287,8 @@ a { color:#8bdcff; } .pass { color:#8dedb0; } .fail { color:#ff9e9e; }
     markVisualizationReset("TIMELINE_CHANGE");
   });
   video.addEventListener("play", () => {
+    trackingSession += 1;
+    pauseRefreshPending = false;
     forgetManualPose();
     hideSynchronizedFrame();
     clearOverlay();
@@ -285,13 +303,22 @@ a { color:#8bdcff; } .pass { color:#8dedb0; } .fail { color:#ff9e9e; }
     clearOverlay();
     markVisualizationReset("SEEK");
     poseState.textContent = following ? "移動先の骨格を再推定します。" : "移動先のフレームで、もう一度姿勢推定してください。";
+    if (following && video.paused) requestPausedRefresh();
     scheduleFollow();
   });
   video.addEventListener("pause", () => {
+    // A manual one-frame inference already knows how to redraw the paused
+    // video; its asynchronous pause event must not erase that result.
+    if (suppressNextPauseRefresh) {
+      suppressNextPauseRefresh = false;
+      return;
+    }
     if (following) {
       hideSynchronizedFrame();
       clearOverlay();
       markVisualizationReset("PAUSE");
+      poseState.textContent = "一時停止したフレームの骨格を更新しています。";
+      requestPausedRefresh();
     }
   });
   video.addEventListener("ended", stopFollowing);
@@ -462,14 +489,18 @@ a { color:#8bdcff; } .pass { color:#8dedb0; } .fail { color:#ff9e9e; }
       byId("model").disabled = !!detector;
     }
   });
-  async function inferPose(manual) {
+  async function inferPose(manual, fromPausedTracking = false) {
     if (inferenceBusy || !detector || !playable()) return;
     inferenceBusy = true;
     byId("infer").disabled = true;
     const generation = currentGeneration;
+    const trackingAtStart = trackingSession;
     const start = Date.now();
     try {
-      if (manual) video.pause();
+      if (manual && !video.paused) {
+        suppressNextPauseRefresh = true;
+        video.pause();
+      }
       const timestamp = video.currentTime;
       // The exact pixels given to MoveNet are retained for paired rendering.
       // Calling estimatePoses(video) on a playing element would produce a delayed
@@ -477,7 +508,8 @@ a { color:#8bdcff; } .pass { color:#8dedb0; } .fail { color:#ff9e9e; }
       if (!manual && !captureVideoSnapshot()) throw new Error("SnapshotUnavailable");
       const poses = await detector.estimatePoses(manual ? video : snapshotCanvas);
       if (!Array.isArray(poses)) throw new Error("InvalidPoseResult");
-      if (generation !== currentGeneration || (!manual && !following)) return;
+      if (generation !== currentGeneration || (!manual && !following) ||
+          (fromPausedTracking && (!following || !video.paused || trackingSession !== trackingAtStart))) return;
       const duration = Date.now() - start;
       const lag = Math.abs(video.currentTime - timestamp);
       if (!manual) {
@@ -539,6 +571,14 @@ a { color:#8bdcff; } .pass { color:#8dedb0; } .fail { color:#ff9e9e; }
     } finally {
       inferenceBusy = false;
       byId("infer").disabled = !detector;
+      if (pauseRefreshPending) {
+        if (following && video.paused && !video.seeking && !video.ended && playable()) {
+          pauseRefreshPending = false;
+          void inferPose(true, true);
+        } else if (!following || !video.paused || video.ended) {
+          pauseRefreshPending = false;
+        }
+      }
     }
   }
 
@@ -556,6 +596,8 @@ a { color:#8bdcff; } .pass { color:#8dedb0; } .fail { color:#ff9e9e; }
       return;
     }
     following = true;
+    trackingSession += 1;
+    pauseRefreshPending = false;
     forgetManualPose();
     lastFollowAt = 0;
     lastSampledTime = null;
@@ -606,6 +648,8 @@ a { color:#8bdcff; } .pass { color:#8dedb0; } .fail { color:#ff9e9e; }
     outcome.pose_visualization_points = 0;
     outcome.pose_visualization_segments = 0;
     forgetManualPose();
+    pauseRefreshPending = false;
+    trackingSession += 1;
     clearOverlay();
     poseState.textContent = "診断をリセットしました。";
     render();
