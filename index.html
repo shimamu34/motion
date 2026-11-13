@@ -651,7 +651,7 @@
     console.error('Pose model loading error:', error);
     detector = null;
     modelState = 'failed';
-    player.poseModelSelect.disabled = !!(window.poseDetection && window.poseDetection.createDetector) === false;
+    player.poseModelSelect.disabled = !(window.poseDetection && window.poseDetection.createDetector);
     player.setModelStatus('姿勢モデルを読み込めません。動画の再生・停止・速度変更・シークは利用できます。');
   }
 })();
