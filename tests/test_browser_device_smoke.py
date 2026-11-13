@@ -96,6 +96,18 @@ class DeviceSmokeContractTest(unittest.TestCase):
         self.assertIn('video.clientWidth, height = video.clientHeight', self.page)
         self.assertIn('Math.min(width / sourceWidth, height / sourceHeight)', self.page)
 
+    def test_reset_reason_and_paused_resize_redraw_are_explicit(self):
+        for token in ('pose_visualization_last_result',
+                      'pose_visualization_reset_reason',
+                      'pose_visualization_points',
+                      'pose_visualization_segments',
+                      'lastManualPose',
+                      'lastManualGeneration === currentGeneration',
+                      'markVisualizationReset("RESIZE")',
+                      'markVisualizationReset("SEEK")',
+                      'markVisualizationReset("PAUSE")'):
+            self.assertIn(token, self.page)
+
     def test_visualization_does_not_claim_success_without_a_person(self):
         self.assertIn('pose_visualization: "NOT_TESTED"', self.page)
         self.assertIn('record("pose_visualization", "NO_POSE")', self.page)
