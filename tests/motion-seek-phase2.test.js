@@ -55,6 +55,7 @@ async function boot({ model = false, deferredPose = false } = {}) {
     '.seek': { value: 0, max: 8 },
     '.speed': { value: '1' },
     '.stickToggle': { checked: model },
+    '.smoothVideoToggle': { checked: false },
     '.flipBtn': button(),
     '.timeDisplay': { textContent: '' },
     '.status': { textContent: '' }
