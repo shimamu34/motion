@@ -45,7 +45,8 @@ class DeviceSmokeContractTest(unittest.TestCase):
     def test_required_interactive_controls(self):
         self.assertTrue({
             "videoFile", "video", "play", "seek", "frame",
-            "speed", "flip", "model", "infer", "copy", "reset", "report"
+            "speed", "flip", "model", "infer", "copy", "reset", "report",
+            "poseOverlay", "poseState"
         }.issubset(self.parsed.ids))
 
     def test_original_application_unchanged_and_dependencies_match(self):
@@ -84,6 +85,33 @@ class DeviceSmokeContractTest(unittest.TestCase):
         for token in ('video.addEventListener("seeked"', "SeekTimeout",
                       "video.duration / 2", "before + 1 / 30", "video.pause()"):
             self.assertIn(token, self.page)
+
+    def test_pose_overlay_renders_on_video_with_confidence_and_bones(self):
+        self.assertIn('<canvas id="poseOverlay"', self.page)
+        self.assertIn('function drawPoseOverlay(poses)', self.page)
+        self.assertIn('ctx.lineTo(', self.page)
+        self.assertIn('ctx.stroke()', self.page)
+        self.assertIn('ctx.arc(', self.page)
+        self.assertIn('const minConfidence = 0.3', self.page)
+        self.assertIn('video.clientWidth, height = video.clientHeight', self.page)
+        self.assertIn('Math.min(width / video.videoWidth, height / video.videoHeight)', self.page)
+
+    def test_visualization_does_not_claim_success_without_a_person(self):
+        self.assertIn('pose_visualization: "NOT_TESTED"', self.page)
+        self.assertIn('record("pose_visualization", "NO_POSE")', self.page)
+        self.assertIn('segments > 0 ? "PASS" : "NO_VISIBLE_SKELETON"', self.page)
+        self.assertIn('poses.length > 0 ? "PosesFound" : "NoPosesInFrame"', self.page)
+
+    def test_flip_keeps_video_and_overlay_aligned(self):
+        self.assertIn('video.style.transform = transform;', self.page)
+        self.assertIn('overlay.style.transform = transform;', self.page)
+        self.assertIn('pointer-events:none', self.page)
+
+    def test_pose_overlay_is_single_frame_and_clears_on_navigation(self):
+        for token in ('video.addEventListener("play"', 'video.addEventListener("seeked"',
+                      'video.addEventListener("emptied"', 'clearOverlay()'):
+            self.assertIn(token, self.page)
+        self.assertIn('VideoFrameChangedDuringInference', self.page)
 
     def test_no_implied_real_world_success(self):
         self.assertIn("NOT_TESTED", self.page)
