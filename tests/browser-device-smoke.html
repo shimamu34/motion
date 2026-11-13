@@ -345,7 +345,7 @@ a { color:#8bdcff; } .pass { color:#8dedb0; } .fail { color:#ff9e9e; }
       const startedAt = Date.now();
       const poses = await detector.estimatePoses(video);
       if (!Array.isArray(poses)) throw new Error("InvalidPoseResult");
-      if (generation !== currentGeneration) return; // Old video must not redraw.
+      if (generation !== currentGeneration || (!manual && !following)) return; // Old video or cancelled tracking must not redraw.
       const lag = Math.abs(video.currentTime - timestamp);
       if (manual ? (!video.paused || lag > .05) : (video.paused || lag > .8)) {
         clearOverlay();
