@@ -5,6 +5,7 @@ on:
     paths:
       - "tests/browser-device-smoke.html"
       - "tests/test_browser_device_smoke.py"
+      - "tests/test_browser_pose_overlay.cjs"
       - ".github/workflows/browser-device-smoke-tests.yml"
       - "docs/CHROMEBOOK_DEVICE_ACCEPTANCE.md"
       - "index.html"
@@ -22,3 +23,5 @@ jobs:
           persist-credentials: false
       - name: Check local video handling and exact production MoveNet dependencies
         run: python3 -m unittest discover -s tests -p 'test_browser_device_smoke.py' -v
+      - name: Exercise canvas drawing and no-person results (Node, no model download)
+        run: node --test tests/test_browser_pose_overlay.cjs
