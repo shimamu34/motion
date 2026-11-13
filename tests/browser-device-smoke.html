@@ -307,6 +307,10 @@ a { color:#8bdcff; } .pass { color:#8dedb0; } .fail { color:#ff9e9e; }
     scheduleFollow();
   });
   video.addEventListener("pause", () => {
+    if (followFrameId !== null) {
+      cancelAnimationFrame(followFrameId);
+      followFrameId = null;
+    }
     // A manual one-frame inference already knows how to redraw the paused
     // video; its asynchronous pause event must not erase that result.
     if (suppressNextPauseRefresh) {
