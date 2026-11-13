@@ -145,8 +145,9 @@ a { color:#8bdcff; } .pass { color:#8dedb0; } .fail { color:#ff9e9e; }
     return {visible, segments};
   }
 
-  video.addEventListener("play", () => { clearOverlay(); poseState.textContent = "再生中です。骨格を確認するには一時停止して姿勢推定してください。"; });
-  video.addEventListener("seeked", () => { clearOverlay(); poseState.textContent = "移動先のフレームで、もう一度姿勢推定してください。"; });
+  video.addEventListener("play", () => { clearOverlay(); record("pose_visualization", "NOT_TESTED"); poseState.textContent = "再生中です。骨格を確認するには一時停止して姿勢推定してください。"; });
+  video.addEventListener("seeked", () => { clearOverlay(); record("pose_visualization", "NOT_TESTED"); poseState.textContent = "移動先のフレームで、もう一度姿勢推定してください。"; });
+  window.addEventListener("resize", () => { clearOverlay(); record("pose_visualization", "NOT_TESTED"); });
   video.addEventListener("emptied", clearOverlay);
 
   function record(key, value, detail) {
@@ -192,6 +193,8 @@ a { color:#8bdcff; } .pass { color:#8dedb0; } .fail { color:#ff9e9e; }
     clearOverlay();
     poseState.textContent = "全身が映るフレームを選んで姿勢推定してください。";
     record("pose_visualization", "NOT_TESTED");
+    delete outcome.movenet_thunder_inference_detail;
+    record("movenet_thunder_inference", "NOT_TESTED");
     video.pause();
     video.removeAttribute("src");
     video.load();
@@ -296,7 +299,7 @@ a { color:#8bdcff; } .pass { color:#8dedb0; } .fail { color:#ff9e9e; }
       const generation = currentGeneration, timestamp = video.currentTime;
       const poses = await detector.estimatePoses(video);
       if (!Array.isArray(poses)) throw new Error("InvalidPoseResult");
-      if (generation !== currentGeneration || Math.abs(timestamp - video.currentTime) > .05) {
+      if (generation !== currentGeneration || !video.paused || Math.abs(timestamp - video.currentTime) > .05) {
         throw new Error("VideoFrameChangedDuringInference");
       }
       record("movenet_thunder_inference", "PASS", poses.length > 0 ? "PosesFound" : "NoPosesInFrame");
