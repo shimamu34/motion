@@ -13,6 +13,17 @@ GitHub Actionsのモックテストだけでは証明できない「本当の端
 
 学校・生徒・教員の非公開情報や個人の顔を含まない、公開しても問題のない短いMP4テスト動画を準備する。外部送信は行わない設計だが、ライブラリとモデルの取得でネットワークを使用する。
 
+## 既存のテスト実績（重複検証を避ける）
+
+2026-11-11の開発ブランチ `fix/motion-startup-resilience` では、別途以下の実ブラウザ検証が記録されている。いずれも**当時のテスト対象コミット**についての成功であり、現在の公開mainや学校Chromebookでの動作を無条件に保証しない。
+
+- [実Chromiumでモデル読込失敗時の動画操作9項目を確認したActions](https://github.com/shimamu34/motion/actions/runs/42967647587)：success。
+- [実MoveNet ThunderのChrome検証Actions](https://github.com/shimamu34/motion/actions/runs/42980628840)：success。GitHub Issue #9には1人・17キーポイント検出の報告が残っている。
+- [Linux WebKitのフォールバック検証Actions](https://github.com/shimamu34/motion/actions/runs/42981091957)：success。iOS Safari実機とは異なる。
+- [手動実機確認用ZIPの生成Actions](https://github.com/shimamu34/motion/actions/runs/42982100057)：success。ユーザーはキットの操作について「全て動いた」と回答しているが、端末名・ブラウザ・実MoveNet検出・動画と骨格の同期は確定していない（[Private記録Issue #9](https://github.com/shimamu34/ai-workspace/issues/9)）。
+
+**今回追加する診断ページの価値は、動画をアップロードせず、通常のHTTPSブラウザから現行アプリと同じライブラリを直接検証でき、結果を非個人情報のJSONとして共有できること**。以前の成果を無かったことにして再実装しない。
+
 ## Chromebookでの手順
 
 1. ChromeのHTTPSページから診断ページを開く。初回はモデルをまだ読み込まない。
