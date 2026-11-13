@@ -77,7 +77,13 @@ async function boot({ model = false, deferredPose = false } = {}) {
   const context = {
     window: { poseDetection: pose },
     poseDetection: pose,
-    document: { getElementById: () => root },
+    document: {
+      getElementById: () => root,
+      createElement(tag) {
+        assert.equal(tag, 'canvas');
+        return { width: 0, height: 0, getContext: () => ({ drawImage() {} }) };
+      }
+    },
     URL: { createObjectURL: () => 'blob:synthetic', revokeObjectURL() {} },
     requestAnimationFrame: callback => {
       rafCallbacks.push(callback);
@@ -105,8 +111,9 @@ function painted(draws) {
 }
 
 async function flush() {
-  await Promise.resolve();
-  await Promise.resolve();
+  // The synchronized drawing pipeline awaits a capture, serial model
+  // inference and validation before it paints the display canvas.
+  for (let i = 0; i < 16; i++) await Promise.resolve();
 }
 
 (async () => {
