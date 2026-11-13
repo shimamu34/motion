@@ -39,6 +39,7 @@ function setup(poses) {
     clientWidth: 640, clientHeight: 360, currentTime: 3, paused: true,
     pause() { this.paused = true; },
     play() { this.paused = false; return Promise.resolve(); },
+    removeAttribute() {}, load() {},
   });
   const overlay = elements.poseOverlay;
   overlay.width = 0;
@@ -56,7 +57,7 @@ function setup(poses) {
   vm.runInNewContext(match[1], {
     window: fakeWindow, document: { getElementById: id => elements[id] },
     poseDetection, navigator: { clipboard: { writeText: async () => {} } },
-    URL: { createObjectURL() {}, revokeObjectURL() {} },
+    URL: { createObjectURL() { return 'blob:local-synthetic-video'; }, revokeObjectURL() {} },
     setTimeout, clearTimeout, console,
   }, { filename: 'browser-device-smoke.html', timeout: 5000 });
   return {
