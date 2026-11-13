@@ -108,6 +108,13 @@ class DeviceSmokeContractTest(unittest.TestCase):
                       'markVisualizationReset("PAUSE")'):
             self.assertIn(token, self.page)
 
+    def test_tracking_pause_refreshes_stopped_frame_without_parallel_inference(self):
+        for token in ('function requestPausedRefresh()', 'pauseRefreshPending',
+                      'video.addEventListener("pause"', 'void inferPose(true, true)',
+                      'trackingSession !== trackingAtStart',
+                      'suppressNextPauseRefresh'):
+            self.assertIn(token, self.page)
+
     def test_visualization_does_not_claim_success_without_a_person(self):
         self.assertIn('pose_visualization: "NOT_TESTED"', self.page)
         self.assertIn('record("pose_visualization", "NO_POSE")', self.page)
