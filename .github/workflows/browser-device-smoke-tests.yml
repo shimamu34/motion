@@ -1,0 +1,24 @@
+name: Check browser device smoke page (offline, no AI API)
+
+on:
+  pull_request:
+    paths:
+      - "tests/browser-device-smoke.html"
+      - "tests/test_browser_device_smoke.py"
+      - ".github/workflows/browser-device-smoke-tests.yml"
+      - "docs/CHROMEBOOK_DEVICE_ACCEPTANCE.md"
+      - "index.html"
+
+permissions:
+  contents: read
+
+jobs:
+  offline-contract-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check local video handling and exact production MoveNet dependencies
+        run: python3 -m unittest discover -s tests -p 'test_browser_device_smoke.py' -v
