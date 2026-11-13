@@ -46,7 +46,7 @@ class DeviceSmokeContractTest(unittest.TestCase):
         self.assertTrue({
             "videoFile", "video", "play", "seek", "frame",
             "speed", "flip", "model", "infer", "copy", "reset", "report",
-            "poseOverlay", "poseState"
+            "poseOverlay", "poseState", "follow"
         }.issubset(self.parsed.ids))
 
     def test_original_application_unchanged_and_dependencies_match(self):
@@ -92,7 +92,7 @@ class DeviceSmokeContractTest(unittest.TestCase):
         self.assertIn('ctx.lineTo(', self.page)
         self.assertIn('ctx.stroke()', self.page)
         self.assertIn('ctx.arc(', self.page)
-        self.assertIn('const minConfidence = 0.3', self.page)
+        self.assertIn('const minConfidence = 0.2', self.page)
         self.assertIn('video.clientWidth, height = video.clientHeight', self.page)
         self.assertIn('Math.min(width / video.videoWidth, height / video.videoHeight)', self.page)
 
@@ -107,11 +107,26 @@ class DeviceSmokeContractTest(unittest.TestCase):
         self.assertIn('overlay.style.transform = transform;', self.page)
         self.assertIn('pointer-events:none', self.page)
 
-    def test_pose_overlay_is_single_frame_and_clears_on_navigation(self):
+    def test_pose_overlay_tracks_frames_and_clears_on_navigation(self):
         for token in ('video.addEventListener("play"', 'video.addEventListener("seeked"',
                       'video.addEventListener("emptied"', 'clearOverlay()'):
             self.assertIn(token, self.page)
-        self.assertIn('VideoFrameChangedDuringInference', self.page)
+        self.assertIn('record("pose_visualization", "STALE_FRAME")', self.page)
+        self.assertIn('generation !== currentGeneration || (!manual && !following)', self.page)
+
+    def test_sensitive_movenet_diagnostic_is_separate_from_production(self):
+        self.assertIn('minPoseScore = 0.10', self.page)
+        self.assertIn('minPoseScore }', self.page)
+        self.assertIn('pose_min_pose_score: 0.10', self.page)
+        self.assertIn('既定値0.25', self.page)
+        self.assertIn('誤検出も増えます', self.page)
+
+    def test_continuous_pose_has_single_throttled_raf_loop(self):
+        for token in ('function scheduleFollow()', 'requestAnimationFrame(async () => {',
+                      'followMinIntervalMs = 330', 'if (inferenceBusy || !detector || !playable()) return;',
+                      'await inferPose(false)', 'function stopFollowing()', 'cancelAnimationFrame(',
+                      'pose_follow_updates', 'pose_follow_poses_found'):
+            self.assertIn(token, self.page)
 
     def test_no_implied_real_world_success(self):
         self.assertIn("NOT_TESTED", self.page)

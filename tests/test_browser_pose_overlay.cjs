@@ -11,6 +11,9 @@ assert.ok(match, 'inline diagnostic JavaScript must exist');
 
 function setup(poses) {
   const drawn = { strokes: 0, points: 0, clears: 0 };
+  let configSeen = null;
+  let nextFrameId = 1;
+  const scheduledFrames = new Map();
   const ctx = {
     setTransform() {}, beginPath() {}, moveTo() {}, lineTo() {},
     stroke() { drawn.strokes++; },
@@ -20,7 +23,7 @@ function setup(poses) {
   const ids = [
     'videoFile', 'video', 'mediaState', 'play', 'seek', 'frame',
     'speed', 'flip', 'model', 'infer', 'modelState',
-    'copy', 'reset', 'report', 'poseOverlay', 'poseState'
+    'copy', 'reset', 'report', 'poseOverlay', 'poseState', 'follow'
   ];
   const elements = {};
   for (const id of ids) {
@@ -48,7 +51,10 @@ function setup(poses) {
   const poseDetection = {
     SupportedModels: { MoveNet: 'MoveNet' },
     movenet: { modelType: { SINGLEPOSE_THUNDER: 'SINGLEPOSE_THUNDER' } },
-    createDetector: async () => ({ estimatePoses: async () => poses }),
+    createDetector: async (_, config) => {
+      configSeen = config;
+      return { estimatePoses: async () => poses };
+    },
   };
   const fakeWindow = {
     tf: {}, poseDetection, devicePixelRatio: 1,
@@ -59,9 +65,24 @@ function setup(poses) {
     poseDetection, navigator: { clipboard: { writeText: async () => {} } },
     URL: { createObjectURL() { return 'blob:local-synthetic-video'; }, revokeObjectURL() {} },
     setTimeout, clearTimeout, console,
+    requestAnimationFrame: callback => {
+      const id = nextFrameId++;
+      scheduledFrames.set(id, callback);
+      return id;
+    },
+    cancelAnimationFrame: id => scheduledFrames.delete(id),
   }, { filename: 'browser-device-smoke.html', timeout: 5000 });
   return {
     elements, drawn,
+    get configSeen() { return configSeen; },
+    get pendingFrames() { return scheduledFrames.size; },
+    async tick() {
+      const next = scheduledFrames.entries().next().value;
+      if (!next) return;
+      const [id, frame] = next;
+      scheduledFrames.delete(id);
+      await frame();
+    },
     async infer() {
       await elements.model.listeners.click();
       await elements.infer.listeners.click();
@@ -123,4 +144,76 @@ test('seeking clears previously drawn skeleton', () => {
   const before = app.drawn.clears;
   app.elements.video.listeners.seeked();
   assert.ok(app.drawn.clears > before);
+});
+
+
+test('diagnostic requests a lower person threshold for previously missed poses', async () => {
+  const app = setup([]);
+  await app.elements.model.listeners.click();
+  assert.equal(app.configSeen.minPoseScore, 0.10);
+  assert.equal(app.elements.follow.disabled, false);
+});
+
+test('continuous tracking draws skeleton while video is playing without concurrent loops', async () => {
+  const points = Array.from({ length: 17 }, (_, i) => ({x: 20+i*11, y: 30+i*8, score: 0.92}));
+  const app = setup([{keypoints: points}]);
+  app.elements.videoFile.files = [{type: 'video/mp4'}];
+  app.elements.videoFile.listeners.change();
+  app.elements.video.readyState = 4;
+  app.elements.video.duration = 10;
+  app.elements.video.listeners.loadeddata();
+  await app.elements.model.listeners.click();
+  app.elements.follow.listeners.click();
+  assert.equal(app.pendingFrames, 0); // paused: no background inference
+  await app.elements.video.play();
+  app.elements.video.listeners.play();
+  assert.equal(app.pendingFrames, 1);
+  await app.tick();
+  const report = JSON.parse(app.elements.report.textContent);
+  assert.equal(report.pose_follow, 'ON');
+  assert.equal(report.pose_follow_updates, 1);
+  assert.equal(report.pose_follow_poses_found, 1);
+  assert.equal(report.pose_visualization, 'PASS');
+  assert.ok(app.drawn.strokes >= 12);
+  assert.equal(app.pendingFrames, 1);
+  app.elements.follow.listeners.click();
+  assert.equal(app.pendingFrames, 0);
+  assert.equal(JSON.parse(app.elements.report.textContent).pose_follow, 'OFF');
+});
+
+test('continuous tracking reports zero-person inference instead of displaying ghost skeleton', async () => {
+  const app = setup([]);
+  app.elements.videoFile.files = [{type: 'video/mp4'}];
+  app.elements.videoFile.listeners.change();
+  app.elements.video.readyState = 4;
+  app.elements.video.duration = 10;
+  app.elements.video.listeners.loadeddata();
+  await app.elements.model.listeners.click();
+  app.elements.follow.listeners.click();
+  await app.elements.video.play();
+  app.elements.video.listeners.play();
+  await app.tick();
+  const report = JSON.parse(app.elements.report.textContent);
+  assert.equal(report.movenet_thunder_inference_detail, 'NoPosesInFrame');
+  assert.equal(report.pose_visualization, 'NO_POSE');
+  assert.equal(report.pose_follow_poses_found, 0);
+  assert.equal(app.drawn.strokes, 0);
+});
+
+test('replacing a video stops tracking and cancels its next animation callback', async () => {
+  const app = setup([]);
+  app.elements.videoFile.files = [{type: 'video/mp4'}];
+  app.elements.videoFile.listeners.change();
+  app.elements.video.readyState = 4;
+  app.elements.video.duration = 10;
+  app.elements.video.listeners.loadeddata();
+  await app.elements.model.listeners.click();
+  app.elements.follow.listeners.click();
+  await app.elements.video.play();
+  app.elements.video.listeners.play();
+  assert.equal(app.pendingFrames, 1);
+  app.elements.videoFile.files = [{type: 'video/mp4'}];
+  app.elements.videoFile.listeners.change();
+  assert.equal(app.pendingFrames, 0);
+  assert.equal(JSON.parse(app.elements.report.textContent).pose_follow, 'OFF');
 });
