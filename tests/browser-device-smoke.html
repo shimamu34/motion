@@ -89,6 +89,10 @@ a { color:#8bdcff; } .pass { color:#8dedb0; } .fail { color:#ff9e9e; }
     movenet_thunder_load: "NOT_TESTED",
     movenet_thunder_inference: "NOT_TESTED",
     pose_visualization: "NOT_TESTED",
+    pose_visualization_last_result: "NOT_TESTED",
+    pose_visualization_reset_reason: "NONE",
+    pose_visualization_points: 0,
+    pose_visualization_segments: 0,
     pose_follow: "NOT_TESTED",
     pose_follow_updates: 0,
     pose_follow_poses_found: 0,
@@ -113,6 +117,9 @@ a { color:#8bdcff; } .pass { color:#8dedb0; } .fail { color:#ff9e9e; }
   let followStartedAt = 0;
   let inferenceTotalMs = 0;
   let lastSampledTime = null;
+  let lastManualPose = null;
+  let lastManualTime = null;
+  let lastManualGeneration = -1;
   const minPoseScore = 0.10;
   const bones = [[5,6],[5,7],[7,9],[6,8],[8,10],[5,11],[6,12],
     [11,12],[11,13],[13,15],[12,14],[14,16]];
@@ -212,6 +219,17 @@ a { color:#8bdcff; } .pass { color:#8dedb0; } .fail { color:#ff9e9e; }
     timelineTime.textContent = video.currentTime.toFixed(2) + " / " + video.duration.toFixed(2) + " 秒";
   }
 
+  function markVisualizationReset(reason) {
+    outcome.pose_visualization_reset_reason = reason;
+    record("pose_visualization", "NOT_TESTED");
+  }
+
+  function forgetManualPose() {
+    lastManualPose = null;
+    lastManualTime = null;
+    lastManualGeneration = -1;
+  }
+
   function stopFollowing() {
     following = false;
     if (followFrameId !== null) {
@@ -220,6 +238,7 @@ a { color:#8bdcff; } .pass { color:#8dedb0; } .fail { color:#ff9e9e; }
     }
     hideSynchronizedFrame();
     clearOverlay();
+    markVisualizationReset("TRACKING_STOPPED");
     byId("follow").textContent = "骨格追跡を開始（再生中も表示）";
     record("pose_follow", "OFF");
   }
@@ -246,34 +265,63 @@ a { color:#8bdcff; } .pass { color:#8dedb0; } .fail { color:#ff9e9e; }
     if (!playable()) return;
     video.currentTime = Math.min(video.duration, Math.max(0, Number(timeline.value)));
     lastSampledTime = null;
+    forgetManualPose();
     hideSynchronizedFrame();
     clearOverlay();
+    markVisualizationReset("TIMELINE_CHANGE");
   });
   video.addEventListener("play", () => {
+    forgetManualPose();
     hideSynchronizedFrame();
     clearOverlay();
-    record("pose_visualization", "NOT_TESTED");
+    markVisualizationReset("PLAY");
     poseState.textContent = following ? "再生中の骨格を追跡しています。" : "再生中の追跡には「骨格追跡を開始」を押してください。";
     scheduleFollow();
   });
   video.addEventListener("seeked", () => {
     lastSampledTime = null;
+    forgetManualPose();
     hideSynchronizedFrame();
     clearOverlay();
-    record("pose_visualization", "NOT_TESTED");
+    markVisualizationReset("SEEK");
     poseState.textContent = following ? "移動先の骨格を再推定します。" : "移動先のフレームで、もう一度姿勢推定してください。";
     scheduleFollow();
   });
   video.addEventListener("pause", () => {
-    hideSynchronizedFrame();
-    clearOverlay();
+    if (following) {
+      hideSynchronizedFrame();
+      clearOverlay();
+      markVisualizationReset("PAUSE");
+    }
   });
   video.addEventListener("ended", stopFollowing);
-  window.addEventListener("resize", () => { hideSynchronizedFrame(); clearOverlay(); record("pose_visualization", "NOT_TESTED"); scheduleFollow(); });
+  window.addEventListener("resize", () => {
+    // Mobile browser chrome can fire resize after a successful paused inference.
+    // Reproject the already measured joints instead of erasing them.
+    if (video.paused && lastManualPose && lastManualGeneration === currentGeneration &&
+        Math.abs(video.currentTime - lastManualTime) < 0.05) {
+      const {visible, segments} = drawPoseOverlay([lastManualPose]);
+      outcome.pose_visualization_points = visible;
+      outcome.pose_visualization_segments = segments;
+      record("pose_visualization", segments > 0 ? "PASS" : "NO_VISIBLE_SKELETON");
+      poseState.textContent = segments > 0
+        ? `骨格線を再描画：点${visible}個・線${segments}本（画面サイズ変更後）。`
+        : "画面サイズ変更後の再描画で有効な関節点が不足しています。";
+      return;
+    }
+    hideSynchronizedFrame();
+    clearOverlay();
+    markVisualizationReset("RESIZE");
+    scheduleFollow();
+  });
   video.addEventListener("emptied", () => { hideSynchronizedFrame(); clearOverlay(); });
 
   function record(key, value, detail) {
     outcome[key] = value;
+    if (key === "pose_visualization" && value !== "NOT_TESTED") {
+      outcome.pose_visualization_last_result = value;
+      outcome.pose_visualization_reset_reason = "NONE";
+    }
     if (detail) outcome[key + "_detail"] = detail;
     render();
   }
@@ -314,9 +362,10 @@ a { color:#8bdcff; } .pass { color:#8dedb0; } .fail { color:#ff9e9e; }
     currentGeneration += 1;
     lastSampledTime = null;
     stopFollowing();
+    forgetManualPose();
     clearOverlay();
     poseState.textContent = "全身が映るフレームを選んで姿勢推定してください。";
-    record("pose_visualization", "NOT_TESTED");
+    markVisualizationReset("VIDEO_CHANGED");
     delete outcome.movenet_thunder_inference_detail;
     record("movenet_thunder_inference", "NOT_TESTED");
     video.pause();
@@ -455,6 +504,9 @@ a { color:#8bdcff; } .pass { color:#8dedb0; } .fail { color:#ff9e9e; }
         if (!showSynchronizedFrame()) throw new Error("SyncCanvasUnavailable");
       }
       if (!poses.length) {
+        forgetManualPose();
+        outcome.pose_visualization_points = 0;
+        outcome.pose_visualization_segments = 0;
         clearOverlay();
         record("pose_visualization", "NO_POSE");
         poseState.textContent = "計算成功・人物0人。全身が映る明るい映像、または別の位置で試してください。";
@@ -462,6 +514,15 @@ a { color:#8bdcff; } .pass { color:#8dedb0; } .fail { color:#ff9e9e; }
         const {visible, segments} = manual
           ? drawPoseOverlay(poses)
           : drawPoseOverlay(poses, snapshotCanvas.width, snapshotCanvas.height);
+        if (manual) {
+          lastManualPose = poses[0];
+          lastManualTime = video.currentTime;
+          lastManualGeneration = currentGeneration;
+        } else {
+          forgetManualPose();
+        }
+        outcome.pose_visualization_points = visible;
+        outcome.pose_visualization_segments = segments;
         record("pose_visualization", segments > 0 ? "PASS" : "NO_VISIBLE_SKELETON");
         poseState.textContent = segments > 0
           ? `骨格線を描画：点${visible}個・線${segments}本（推定${duration}ms、映像遅延約${Math.round(lag * 1000)}ms）。${manual ? "停止画面" : "同一フレーム同期プレビュー"}。`
@@ -495,6 +556,7 @@ a { color:#8bdcff; } .pass { color:#8dedb0; } .fail { color:#ff9e9e; }
       return;
     }
     following = true;
+    forgetManualPose();
     lastFollowAt = 0;
     lastSampledTime = null;
     followStartedAt = Date.now();
@@ -539,6 +601,11 @@ a { color:#8bdcff; } .pass { color:#8dedb0; } .fail { color:#ff9e9e; }
     outcome.pose_follow_video_lag_ms = 0;
     outcome.pose_follow_fps = 0;
     outcome.pose_follow_stale_drops = 0;
+    outcome.pose_visualization_last_result = "NOT_TESTED";
+    outcome.pose_visualization_reset_reason = "RESET";
+    outcome.pose_visualization_points = 0;
+    outcome.pose_visualization_segments = 0;
+    forgetManualPose();
     clearOverlay();
     poseState.textContent = "診断をリセットしました。";
     render();
