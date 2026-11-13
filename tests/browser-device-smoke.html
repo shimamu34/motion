@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>motion｜端末・姿勢モデル動作診断</title>
+<style>
+:root { color-scheme: dark; font-family: system-ui, -apple-system, sans-serif; }
+body { margin: 0; background:#0b1220; color:#e6edf7; line-height:1.6; }
+main { max-width:850px; margin:auto; padding:16px 18px 40px; }
+h1 { font-size:1.35rem; margin:.3rem 0; }
+p { margin:.5rem 0 1rem; }
+.small { color:#b9c7d7; font-size:.9rem; }
+.panel { background:#162235; border:1px solid #33465d; border-radius:12px; padding:14px; margin:16px 0; }
+button,select,input[type=file] { font:inherit; max-width:100%; color:inherit; }
+button,select { border-radius:8px; border:1px solid #687d95; background:#253950; padding:8px 11px; margin:4px 5px 4px 0; cursor:pointer; }
+button:disabled { opacity:.45; cursor:not-allowed; }
+button:focus-visible, select:focus-visible, input:focus-visible { outline:3px solid #84d6fa; }
+video { display:block; background:#000; max-width:100%; width:100%; max-height:55vh; border-radius:8px; }
+pre { white-space:pre-wrap; word-break:break-word; font-size:.83rem; background:#07101d; padding:12px; border-radius:8px; }
+a { color:#8bdcff; } .pass { color:#8dedb0; } .fail { color:#ff9e9e; }
+</style>
+</head>
+<body>
+<main>
+<h1>motion｜端末・姿勢モデル動作診断</h1>
+<p>Chromebook・Mac・iPadなどで、<strong>実際の動画再生・シーク・速度変更・MoveNet Thunder姿勢推定</strong>を確認するための独立テストです。元のアプリは変更しません。</p>
+<p class="small">動画はこのページ内の端末メモリで処理し、アップロードしません。ライブラリ・姿勢モデルの取得時のみ外部CDN等へ接続します。学校・生徒の個人情報が含まれないテスト動画を使ってください。</p>
+<div class="panel">
+<h2>1. 動画を選択</h2>
+<label for="videoFile">端末内のテスト動画（MP4推奨）</label>
+<input type="file" id="videoFile" accept="video/*">
+<video id="video" playsinline muted controls preload="metadata"></video>
+<p id="mediaState" role="status" aria-live="polite">動画は未選択です。</p>
+<button type="button" id="play">再生／停止</button>
+<button type="button" id="seek">中間へシーク</button>
+<button type="button" id="frame">約1フレーム進む</button>
+<label for="speed">速度</label>
+<select id="speed"><option value="0.5">0.5倍</option><option value="1" selected>1倍</option><option value="2">2倍</option></select>
+<button type="button" id="flip">左右反転</button>
+</div>
+<div class="panel">
+<h2>2. 姿勢モデルを実測</h2>
+<p class="small">本番アプリと同じTensorFlow.js 4.15.0とpose-detectionのMoveNet Thunderを使用します。モデルのダウンロードや初回推定は時間がかかる場合があります。モデル取得が失敗しても動画操作テストは続けられます。</p>
+<button type="button" id="model">MoveNet Thunderを読み込む</button>
+<button type="button" id="infer" disabled>現在の映像で姿勢推定</button>
+<p id="modelState" role="status" aria-live="polite">姿勢モデルは未確認です。</p>
+</div>
+<div class="panel">
+<h2>3. 診断結果</h2>
+<p>操作が成功したかを記録します。結果には動画の画像・ファイル名・骨格座標・端末識別子を含めません。</p>
+<button type="button" id="copy">診断結果をコピー</button>
+<button type="button" id="reset">診断をリセット</button>
+<pre id="report" aria-live="polite">診断を開始してください。</pre>
+</div>
+<p class="small">これは独立した端末診断です。結果がPASSでも<a href="../index.html">本番のmotionアプリ</a>の左右反転・棒人間重畳・シークが正常とは限らないため、本番画面でも同じ動画を使って確認してください。</p>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
+<script>
+(() => {
+  "use strict";
+  const byId = id => document.getElementById(id);
+  const video = byId("video");
+  const report = byId("report");
+  const mediaState = byId("mediaState");
+  const modelState = byId("modelState");
+  const outcome = {
+    test: "motion-local-device-smoke-v1",
+    video_decoding: "NOT_TESTED",
+    video_play_pause: "NOT_TESTED",
+    video_seek: "NOT_TESTED",
+    frame_approx_30fps: "NOT_TESTED",
+    playback_speed: "NOT_TESTED",
+    horizontal_flip: "NOT_TESTED",
+    movenet_thunder_load: "NOT_TESTED",
+    movenet_thunder_inference: "NOT_TESTED"
+  };
+  let objectUrl = null;
+  let detector = null;
+  let mirrored = false;
+  let modelBusy = false;
+  let inferenceBusy = false;
+  let currentGeneration = 0;
+
+  function record(key, value, detail) {
+    outcome[key] = value;
+    if (detail) outcome[key + "_detail"] = detail;
+    render();
+  }
+  function render() {
+    report.textContent = JSON.stringify(outcome, null, 2);
+  }
+  function fail(key, error) {
+    record(key, "FAIL", error && error.name ? error.name : "UnknownError");
+  }
+  function playable() {
+    return !!objectUrl && Number.isFinite(video.duration) && video.duration > 0 && video.readyState >= 2;
+  }
+  function waitForSeek(target) {
+    return new Promise((resolve, reject) => {
+      if (!playable()) { reject(new Error("NoVideo")); return; }
+      const next = Math.min(Math.max(0, target), Math.max(0, video.duration - 0.02));
+      if (Math.abs(video.currentTime - next) < .02) { resolve(video.currentTime); return; }
+      const generation = currentGeneration;
+      const timeout = setTimeout(() => { cleanup(); reject(new Error("SeekTimeout")); }, 5000);
+      function cleanup() {
+        clearTimeout(timeout);
+        video.removeEventListener("seeked", complete);
+        video.removeEventListener("error", broken);
+      }
+      function complete() {
+        cleanup();
+        if (currentGeneration !== generation) { reject(new Error("SourceChanged")); return; }
+        resolve(video.currentTime);
+      }
+      function broken() { cleanup(); reject(new Error("MediaError")); }
+      video.addEventListener("seeked", complete, { once: true });
+      video.addEventListener("error", broken, { once: true });
+      video.currentTime = next;
+    });
+  }
+  byId("videoFile").addEventListener("change", () => {
+    const file = byId("videoFile").files && byId("videoFile").files[0];
+    currentGeneration += 1;
+    video.pause();
+    video.removeAttribute("src");
+    video.load();
+    if (objectUrl) URL.revokeObjectURL(objectUrl);
+    objectUrl = null;
+    if (!file) { mediaState.textContent = "動画は未選択です。"; render(); return; }
+    const generation = currentGeneration;
+    objectUrl = URL.createObjectURL(file);
+    mediaState.textContent = "端末内の動画を解析しています…";
+    video.src = objectUrl;
+    video.addEventListener("loadeddata", () => {
+      if (currentGeneration !== generation) return;
+      record("video_decoding", "PASS");
+      mediaState.textContent = "動画読込成功。画面が表示されるか確認してください。";
+    }, { once:true });
+    video.addEventListener("error", () => {
+      if (currentGeneration !== generation) return;
+      record("video_decoding", "FAIL", "CodecOrDecodeError");
+      mediaState.textContent = "動画を読み込めません。対応形式をご確認ください。";
+    }, { once:true });
+    video.load();
+  });
+  byId("play").addEventListener("click", async () => {
+    if (!playable()) { record("video_play_pause", "FAIL", "NoLoadedVideo"); return; }
+    try {
+      if (video.paused) {
+        await video.play();
+        if (video.paused) throw new Error("NoPlayback");
+        record("video_play_pause", "PASS");
+      } else {
+        video.pause();
+        record("video_play_pause", video.paused ? "PASS" : "FAIL");
+      }
+    } catch (error) { fail("video_play_pause", error); }
+  });
+  byId("seek").addEventListener("click", async () => {
+    try {
+      if (!playable()) throw new Error("NoLoadedVideo");
+      video.pause();
+      await waitForSeek(video.duration / 2);
+      record("video_seek", "PASS");
+    } catch (error) { fail("video_seek", error); }
+  });
+  byId("frame").addEventListener("click", async () => {
+    try {
+      if (!playable()) throw new Error("NoLoadedVideo");
+      video.pause();
+      const before = video.currentTime;
+      const after = await waitForSeek(before + 1 / 30);
+      record("frame_approx_30fps", after > before ? "PASS" : "NOT_APPLICABLE");
+    } catch (error) { fail("frame_approx_30fps", error); }
+  });
+  byId("speed").addEventListener("change", () => {
+    const speed = Number(byId("speed").value);
+    video.playbackRate = speed;
+    record("playback_speed", Math.abs(video.playbackRate - speed) < 0.0001 ? "PASS" : "FAIL");
+  });
+  byId("flip").addEventListener("click", () => {
+    mirrored = !mirrored;
+    video.style.transform = mirrored ? "scaleX(-1)" : "none";
+    record("horizontal_flip", "PASS");
+  });
+  byId("model").addEventListener("click", async () => {
+    if (modelBusy) return;
+    if (!window.poseDetection || !window.tf) {
+      record("movenet_thunder_load", "FAIL", "CDNLibraryUnavailable");
+      modelState.textContent = "ライブラリの読み込みに失敗しました。動画操作は継続できます。";
+      return;
+    }
+    if (detector) { record("movenet_thunder_load", "PASS"); return; }
+    modelBusy = true;
+    byId("model").disabled = true;
+    modelState.textContent = "MoveNet Thunderをダウンロードしています…";
+    try {
+      detector = await poseDetection.createDetector(
+        poseDetection.SupportedModels.MoveNet,
+        { modelType: poseDetection.movenet.modelType.SINGLEPOSE_THUNDER }
+      );
+      record("movenet_thunder_load", "PASS");
+      modelState.textContent = "MoveNet Thunder読み込み成功。動画を選び推定を実行してください。";
+      byId("infer").disabled = false;
+    } catch (error) {
+      fail("movenet_thunder_load", error);
+      modelState.textContent = "モデルを読み込めません。通信や端末メモリをご確認ください。";
+    } finally {
+      modelBusy = false;
+      byId("model").disabled = !!detector;
+    }
+  });
+  byId("infer").addEventListener("click", async () => {
+    if (inferenceBusy) return;
+    if (!detector || !playable()) {
+      record("movenet_thunder_inference", "FAIL", "ModelOrVideoNotReady");
+      return;
+    }
+    inferenceBusy = true;
+    byId("infer").disabled = true;
+    try {
+      const poses = await detector.estimatePoses(video);
+      // A valid empty pose list means inference executed; the person may be out of frame.
+      if (!Array.isArray(poses)) throw new Error("InvalidPoseResult");
+      record("movenet_thunder_inference", "PASS", poses.length > 0 ? "PosesFound" : "NoPosesInFrame");
+    } catch (error) { fail("movenet_thunder_inference", error); }
+    finally { inferenceBusy = false; byId("infer").disabled = false; }
+  });
+  byId("copy").addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(JSON.stringify(outcome, null, 2)); }
+    catch (_) { report.focus(); report.textContent = JSON.stringify(outcome, null, 2); }
+  });
+  byId("reset").addEventListener("click", () => {
+    Object.keys(outcome).forEach(k => {
+      if (k !== "test") delete outcome[k];
+    });
+    for (const k of ["video_decoding","video_play_pause","video_seek","frame_approx_30fps",
+      "playback_speed","horizontal_flip","movenet_thunder_load","movenet_thunder_inference"]) {
+      outcome[k] = "NOT_TESTED";
+    }
+    render();
+  });
+  window.addEventListener("pagehide", () => {
+    video.pause();
+    if (objectUrl) URL.revokeObjectURL(objectUrl);
+    if (detector && typeof detector.dispose === "function") detector.dispose();
+  });
+  render();
+})();
+</script>
+</body>
+</html>
