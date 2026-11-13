@@ -60,6 +60,7 @@ async function boot({ model = false, modelReject = false, modelDelay = false, po
     '.seek': { max: 1, value: 0 },
     '.speed': { value: '1' },
     '.stickToggle': { checked: true },
+    '.smoothVideoToggle': { checked: false },
     '.flipBtn': button(),
     '.timeDisplay': { textContent: '' },
     '.status': status
@@ -275,6 +276,37 @@ const flushMicrotasks = async () => {
       'the video display must use the exact captured frame sent to MoveNet');
     assert.equal(x.poseInputs[0].width, 640);
     assert.equal(x.poseInputs[0].height, 360);
+  });
+
+  await check('Optional smooth mode keeps native video visible and still draws skeleton', async () => {
+    const keypoints = Array.from({length:17}, (_,i) => ({
+      x: 15+i*12, y: 10+i*10, score: 0.98
+    }));
+    const x = await boot({ model: true, poseOnEstimate: async () => [{keypoints}] });
+    x.elements['.stickToggle'].checked = false;
+    x.elements['.smoothVideoToggle'].checked = true;
+    x.video.paused = false;
+    x.video.onplay();
+    await flushMicrotasks();
+    assert.equal(x.poseInputs.length, 1);
+    assert.equal(x.capturedFrames.length, 1, 'MoveNet should still infer from a captured frame');
+    assert.equal(x.displayedFrames.length, 0,
+      'transparent overlay must not cover the browser-native video with stale frames');
+    assert.ok(x.calls.includes('clearRect'), 'existing overlay should be cleared');
+    x.elements['.smoothVideoToggle'].checked = false;
+    x.elements['.smoothVideoToggle'].onchange();
+    await flushMicrotasks();
+    assert.ok(x.calls.includes('clearRect'), 'sync mode change clears stale drawing immediately');
+  });
+
+  await check('Stick mode remains opaque black even with smooth-video option on', async () => {
+    const x = await boot({ model: true });
+    x.elements['.smoothVideoToggle'].checked = true;
+    x.video.paused = false;
+    x.video.onplay();
+    await flushMicrotasks();
+    assert.ok(x.calls.includes('fillRect'), 'stick picture still needs an opaque black background');
+    assert.equal(x.displayedFrames.length, 0, 'stick picture hides native video');
   });
 
   await check('Paused frame is re-inferred and drawn against its own snapshot', async () => {
