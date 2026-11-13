@@ -282,6 +282,9 @@
       this.mediaGeneration += 1;
       this.stopRenderLoop();
       this.frameUpdateInFlight = null;
+      // Do not let an inference from a replaced video block the new source.
+      // The old asynchronous result remains guarded by mediaGeneration.
+      this.poseInferenceInFlight = null;
       this.poses = [];
       this.clearCanvas();
       if (this.objectUrl) {
