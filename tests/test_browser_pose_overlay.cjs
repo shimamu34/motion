@@ -16,6 +16,7 @@ function setup(poses, onEstimate = null) {
   let configSeen = null;
   let nextFrameId = 1;
   const scheduledFrames = new Map();
+  const windowListeners = new Map();
   const ctx = {
     setTransform() {}, beginPath() {}, moveTo() {}, lineTo() {},
     stroke() { drawn.strokes++; },
@@ -72,7 +73,7 @@ function setup(poses, onEstimate = null) {
   };
   const fakeWindow = {
     tf: {}, poseDetection, devicePixelRatio: 1,
-    addEventListener() {},
+    addEventListener(name, listener) { windowListeners.set(name, listener); },
   };
   vm.runInNewContext(match[1], {
     window: fakeWindow, document: {
@@ -91,6 +92,11 @@ function setup(poses, onEstimate = null) {
   }, { filename: 'browser-device-smoke.html', timeout: 5000 });
   return {
     elements, drawn,
+    fireWindowEvent(name) {
+      const listener = windowListeners.get(name);
+      assert.ok(listener, `window event ${name} has a listener`);
+      listener();
+    },
     get inputSeen() { return inputSeen; },
     get snapshot() { return snapshot; },
     get estimateCalls() { return estimateCalls; },
@@ -136,6 +142,37 @@ test('real pose results draw 12 skeleton edges and 17 joint dots in canvas', asy
   assert.equal(result.pose_visualization, 'PASS');
   assert.equal(app.drawn.strokes, 12);
   assert.equal(app.drawn.points, 17);
+});
+
+test('paused skeleton survives browser resize and records its draw state', async () => {
+  const points = Array.from({length:17}, (_,i)=>({x:15+i*16,y:12+i*9,score:.96}));
+  const app = setup([{keypoints:points}]);
+  app.elements.videoFile.files = [{type:'video/mp4'}];
+  app.elements.videoFile.listeners.change();
+  app.elements.video.listeners.loadeddata();
+  const first = await app.infer();
+  assert.equal(first.pose_visualization, 'PASS');
+  assert.equal(first.pose_visualization_last_result, 'PASS');
+  assert.equal(first.pose_visualization_segments, 12);
+  assert.equal(first.pose_visualization_points, 17);
+  const before = app.drawn.strokes;
+  app.elements.video.clientWidth = 520;
+  app.fireWindowEvent('resize');
+  const resized = JSON.parse(app.elements.report.textContent);
+  assert.equal(resized.pose_visualization, 'PASS');
+  assert.equal(resized.pose_visualization_reset_reason, 'NONE');
+  assert.equal(app.drawn.strokes, before + 12);
+  assert.match(app.elements.poseState.textContent, /再描画/);
+
+  // A new frame invalidates the previous pose. A later resize must not
+  // resurrect skeleton points from the old frame.
+  app.elements.video.currentTime += 1;
+  app.elements.video.listeners.seeked();
+  app.fireWindowEvent('resize');
+  const afterSeek = JSON.parse(app.elements.report.textContent);
+  assert.equal(afterSeek.pose_visualization, 'NOT_TESTED');
+  assert.equal(afterSeek.pose_visualization_last_result, 'PASS');
+  assert.equal(afterSeek.pose_visualization_reset_reason, 'RESIZE');
 });
 
 test('no pose after model call reports NoPosesInFrame and zero skeleton lines', async () => {
@@ -208,6 +245,10 @@ test('continuous tracking draws skeleton while video is playing without concurre
   assert.equal(app.pendingFrames, 0);
   assert.equal(JSON.parse(app.elements.report.textContent).pose_follow, 'OFF');
   assert.equal(app.elements.syncFrame.hidden, true);
+  const stopped = JSON.parse(app.elements.report.textContent);
+  assert.equal(stopped.pose_visualization, 'NOT_TESTED');
+  assert.equal(stopped.pose_visualization_last_result, 'PASS');
+  assert.equal(stopped.pose_visualization_reset_reason, 'TRACKING_STOPPED');
 });
 
 test('continuous tracking reports zero-person inference instead of displaying ghost skeleton', async () => {
