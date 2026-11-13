@@ -168,6 +168,7 @@
       this.renderLoopId = 0;
       this.renderLoopRunning = false;
       this.frameUpdateInFlight = null;
+      this.poseInferenceInFlight = null;
       this.isLoadingVideo = false;
 
       this.fileInput.onchange = () => this.loadVideo();
@@ -187,8 +188,12 @@
         } else {
           this.setStatus('動画を読み込みました。再生できます。');
         }
-        this.canvas.width = this.video.videoWidth;
-        this.canvas.height = this.video.videoHeight;
+        // Limit the canvas to the same 640px raster proven by the device
+        // diagnostic; decoding the original video is left to the browser.
+        this.canvas.width = Math.min(640, this.video.videoWidth);
+        this.canvas.height = Math.max(1, Math.round(
+          this.canvas.width * this.video.videoHeight / this.video.videoWidth
+        ));
         this.seekBar.max = this.video.duration;
         this.seekBar.value = 0;
         this.updateTimeDisplay();
@@ -277,6 +282,11 @@
       this.mediaGeneration += 1;
       this.stopRenderLoop();
       this.frameUpdateInFlight = null;
+      // Do not let an inference from a replaced video block the new source.
+      // The old asynchronous result remains guarded by mediaGeneration.
+      this.poseInferenceInFlight = null;
+      this.poses = [];
+      this.clearCanvas();
       if (this.objectUrl) {
         URL.revokeObjectURL(this.objectUrl);
         this.objectUrl = null;
@@ -295,21 +305,54 @@
       else this.video.pause();
     }
 
+    // A sampled image is shared by inference and display. The actual video
+    // advances independently, so drawing points over the live video would
+    // otherwise make the skeleton appear to trail behind the person.
+    captureFrame() {
+      if (this.video.readyState < 2 || !this.video.videoWidth || !this.video.videoHeight) return null;
+      const frame = document.createElement('canvas');
+      frame.width = Math.max(1, Math.min(640, this.video.videoWidth));
+      frame.height = Math.max(1, Math.round(frame.width * this.video.videoHeight / this.video.videoWidth));
+      const frameCtx = frame.getContext('2d');
+      if (!frameCtx) return null;
+      frameCtx.drawImage(this.video, 0, 0, frame.width, frame.height);
+      return frame;
+    }
+
+    async analyzeFrame() {
+      // Serialize MoveNet calls on low-end Chromebooks. Waiting callers take
+      // a NEW frame after the earlier inference, not an obsolete snapshot.
+      while (this.poseInferenceInFlight) await this.poseInferenceInFlight;
+      const frame = this.captureFrame();
+      if (!frame) return null;
+      const work = this.estimatePoses(frame);
+      this.poseInferenceInFlight = work;
+      try {
+        return { frame, poses: await work };
+      } finally {
+        if (this.poseInferenceInFlight === work) this.poseInferenceInFlight = null;
+      }
+    }
+
+    paintFrame(frame) {
+      this.clearCanvas();
+      if (this.stickToggle.checked && detector) {
+        this.ctx.fillStyle = 'black';
+        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+      } else {
+        this.ctx.drawImage(frame || this.video, 0, 0, this.canvas.width, this.canvas.height);
+      }
+    }
+
     async updateFrame() {
       if (this.video.readyState < 2 || !this.video.videoWidth || !this.video.videoHeight) return;
       const requestId = this.seekRequestId;
       const mediaGeneration = this.mediaGeneration;
-      this.clearCanvas();
-      if (this.stickToggle.checked && detector) {
-        this.ctx.fillStyle = "black";
-        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-      } else {
-        this.ctx.drawImage(this.video, 0, 0, this.canvas.width, this.canvas.height);
-      }
-      const poses = await this.estimatePoses();
-      if (requestId !== this.seekRequestId || mediaGeneration !== this.mediaGeneration) return;
-      this.poses = poses;
-      this.drawAllPoses();
+      const result = detector ? await this.analyzeFrame() : { frame: null, poses: [] };
+      if (!result || requestId !== this.seekRequestId || mediaGeneration !== this.mediaGeneration) return;
+      this.poses = result.poses;
+      this.paintFrame(result.frame);
+      this.drawAllPoses(result.frame);
     }
 
     startRenderLoop({ immediate = true } = {}) {
@@ -337,20 +380,18 @@
         }
         return;
       }
-      this.clearCanvas();
-      if (this.stickToggle.checked && detector) {
-        this.ctx.fillStyle = "black";
-        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-      } else {
-        this.ctx.drawImage(this.video, 0, 0, this.canvas.width, this.canvas.height);
-      }
       const requestId = this.seekRequestId;
       const mediaGeneration = this.mediaGeneration;
-      const poses = await this.estimatePoses();
+      const result = detector ? await this.analyzeFrame() : { frame: null, poses: [] };
       if (loopId !== this.renderLoopId || requestId !== this.seekRequestId ||
           mediaGeneration !== this.mediaGeneration || this.isSeekingFrame || this.video.paused) return;
-      this.poses = poses;
-      this.drawAllPoses();
+      if (!result) {
+        this.animationId = requestAnimationFrame(() => this.render(loopId));
+        return;
+      }
+      this.poses = result.poses;
+      this.paintFrame(result.frame);
+      this.drawAllPoses(result.frame);
       this.animationId = requestAnimationFrame(() => this.render(loopId));
     }
 
@@ -396,22 +437,24 @@
       this.video.playbackRate = parseFloat(this.speedSel.value);
     }
 
-    async estimatePoses() {
+    async estimatePoses(frame = this.video) {
       if (!detector || !window.poseDetection) {
         return [];
       }
       try {
-        return await detector.estimatePoses(this.video);
+        return await detector.estimatePoses(frame);
       } catch (e) {
         console.error("Pose detection error:", e);
         return [];
       }
     }
 
-    drawAllPoses() {
+    drawAllPoses(frame = this.video) {
       const ctx = this.ctx;
-      const scaleX = this.canvas.width / this.video.videoWidth;
-      const scaleY = this.canvas.height / this.video.videoHeight;
+      const sourceWidth = frame && frame.width ? frame.width : this.video.videoWidth;
+      const sourceHeight = frame && frame.height ? frame.height : this.video.videoHeight;
+      const scaleX = this.canvas.width / sourceWidth;
+      const scaleY = this.canvas.height / sourceHeight;
       if (!detector || !window.poseDetection) return;
       const adjacentPairs = poseDetection.util.getAdjacentPairs(poseDetection.SupportedModels.MoveNet);
 
@@ -435,7 +478,7 @@
         adjacentPairs.forEach(([i, j]) => {
           const kp1 = pose.keypoints[i];
           const kp2 = pose.keypoints[j];
-          if (kp1.score > 0.3 && kp2.score > 0.3) {
+          if (kp1.score >= 0.2 && kp2.score >= 0.2) {
             const x1 = kp1.x * scaleX;
             const y1 = kp1.y * scaleY;
             const x2 = kp2.x * scaleX;
@@ -477,7 +520,8 @@
     }
     detector = await poseDetection.createDetector(
       poseDetection.SupportedModels.MoveNet,
-      { modelType: poseDetection.movenet.modelType.SINGLEPOSE_THUNDER }
+      { modelType: poseDetection.movenet.modelType.SINGLEPOSE_THUNDER,
+        minPoseScore: 0.10 }
     );
     modelState = 'ready';
     player.setModelStatus('姿勢モデルを読み込みました。骨格表示を利用できます。');

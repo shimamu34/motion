@@ -10,15 +10,21 @@ const code = matches.map((match) => match[1]).filter(Boolean).at(-1);
 assert.ok(code && code.includes('class Player'), 'Inline Player script missing');
 new vm.Script(code);
 
-async function boot({ model = false, modelReject = false, modelDelay = false } = {}) {
+async function boot({ model = false, modelReject = false, modelDelay = false, poseOnEstimate = null } = {}) {
   const calls = [];
+  const poseInputs = [];
+  const displayedFrames = [];
+  const capturedFrames = [];
   const revoked = [];
   const rafs = [];
   let resolveModel;
   let id = 0;
   const ctx = {
     clearRect: () => calls.push('clearRect'),
-    drawImage: () => calls.push('drawImage'),
+    drawImage: (source) => {
+      calls.push('drawImage');
+      displayedFrames.push(source);
+    },
     fillRect: () => calls.push('fillRect'),
     beginPath: () => {},
     moveTo: () => {},
@@ -69,13 +75,28 @@ async function boot({ model = false, modelReject = false, modelDelay = false } =
     createDetector: async () => {
       if (modelDelay) await new Promise(resolve => { resolveModel = resolve; });
       if (modelReject) throw Error('blocked weights');
-      return { estimatePoses: async () => [] };
+      return { estimatePoses: async source => {
+        poseInputs.push(source);
+        return poseOnEstimate ? await poseOnEstimate(source) : [];
+      } };
     }
   } : undefined;
   const context = {
     window: { poseDetection: pose },
     poseDetection: pose,
-    document: { getElementById: () => root },
+    document: {
+      getElementById: () => root,
+      createElement(tag) {
+        assert.equal(tag, 'canvas');
+        const frame = {width: 0, height: 0, getContext: () => ({
+          drawImage: source => {
+            assert.equal(source, video, 'snapshot must capture the current video frame');
+            capturedFrames.push(frame);
+          }
+        })};
+        return frame;
+      }
+    },
     URL: {
       createObjectURL: () => 'blob:test-' + (++id),
       revokeObjectURL: (value) => revoked.push(value)
@@ -86,9 +107,13 @@ async function boot({ model = false, modelReject = false, modelDelay = false } =
   };
   const bootPromise = vm.runInNewContext(code, context);
   if (!modelDelay) await bootPromise;
-  return { calls, revoked, video, status, elements, rafs,
+  return { calls, revoked, video, status, elements, rafs, poseInputs, displayedFrames, capturedFrames,
     finishModel: async () => { if (resolveModel) resolveModel(); await bootPromise; } };
 }
+
+const flushMicrotasks = async () => {
+  for (let i = 0; i < 12; i++) await Promise.resolve();
+};
 
 (async function run() {
   let count = 0;
@@ -172,7 +197,7 @@ async function boot({ model = false, modelReject = false, modelDelay = false } =
     const x = await boot({ model: true });
     x.video.paused = false;
     x.video.onplay();
-    await Promise.resolve();
+    await flushMicrotasks();
     assert.ok(x.calls.includes('fillRect'), 'normal stick mode draws background');
   });
   await check('Switching videos revokes previous object URL', async () => {
@@ -206,7 +231,7 @@ async function boot({ model = false, modelReject = false, modelDelay = false } =
     x.video.videoWidth = 640;
     x.video.videoHeight = 360;
     x.rafs.shift()();
-    await Promise.resolve();
+    await flushMicrotasks();
     assert.ok(x.calls.includes('fillRect'), 'render resumes as soon as video is ready');
   });
 
@@ -235,6 +260,51 @@ async function boot({ model = false, modelReject = false, modelDelay = false } =
     await Promise.resolve();
     assert.match(x.status.textContent, /動画を再生できませんでした/);
   });
+  await check('Pose detector gets same sampled frame that real-video mode displays', async () => {
+    const keypoints = Array.from({length: 17}, (_, i) => ({
+      x: 10 + i * 13, y: 9 + i * 9, score: 0.95
+    }));
+    const x = await boot({ model: true, poseOnEstimate: async () => [{keypoints}] });
+    x.elements['.stickToggle'].checked = false;
+    x.video.paused = false;
+    x.video.onplay();
+    await flushMicrotasks();
+    assert.equal(x.poseInputs.length, 1, 'one detector inference after one rendered frame');
+    assert.equal(x.capturedFrames.length, 1);
+    assert.ok(x.displayedFrames.includes(x.poseInputs[0]),
+      'the video display must use the exact captured frame sent to MoveNet');
+    assert.equal(x.poseInputs[0].width, 640);
+    assert.equal(x.poseInputs[0].height, 360);
+  });
+
+  await check('Paused frame is re-inferred and drawn against its own snapshot', async () => {
+    const x = await boot({ model: true });
+    x.video.paused = false;
+    x.video.onplay();
+    await flushMicrotasks();
+    assert.equal(x.poseInputs.length, 1);
+    x.video.pause();
+    await flushMicrotasks();
+    assert.equal(x.poseInputs.length, 2,
+      'pause should re-infer from the stopped frame rather than reuse an old pose');
+    assert.notEqual(x.poseInputs[1], x.poseInputs[0]);
+    assert.ok(x.calls.includes('fillRect'));
+  });
+
+  await check('Production MoveNet limits model input to 640px for large video', async () => {
+    const x = await boot({ model: true });
+    x.video.videoWidth = 3840;
+    x.video.videoHeight = 2160;
+    x.video.onloadedmetadata();
+    assert.equal(x.elements.canvas.width, 640);
+    assert.equal(x.elements.canvas.height, 360);
+    x.video.paused = false;
+    x.video.onplay();
+    await flushMicrotasks();
+    assert.equal(x.poseInputs[0].width, 640);
+    assert.equal(x.poseInputs[0].height, 360);
+  });
+
   console.log('Ran ' + count + ' Phase-1 offline checks');
 })().catch((err) => {
   console.error('FAIL ' + err.stack);
