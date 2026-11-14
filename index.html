@@ -91,6 +91,12 @@
     font-size: 14px;
     user-select: none;
   }
+  .posePerf {
+    margin-top: 8px;
+    color: #374151;
+    font-size: 12px;
+    line-height: 1.5;
+  }
 </style>
 </head>
 <body>
@@ -125,8 +131,15 @@
   <div class="controls-bottom">
     <label><input type="checkbox" class="stickToggle" checked /> スティックピクチャー化</label>
     <label title="通常映像はブラウザで滑らかに再生します。骨格表示は少し遅れる場合があります。"><input type="checkbox" class="smoothVideoToggle" /> 映像なめらか（遅延の可能性あり）</label>
+    <label title="Lightningは高速ですがThunderより関節位置の推定精度が低い場合があります。">骨格AI
+      <select class="poseModelSelect" aria-label="姿勢推定モデル" disabled>
+        <option value="THUNDER" selected>Thunder（精度）</option>
+        <option value="LIGHTNING">Lightning（高速）</option>
+      </select>
+    </label>
     <button class="flipBtn">左右反転 ↔️</button>
   </div>
+  <div class="posePerf" aria-label="骨格処理速度">骨格処理速度：モデル読込後に計測します。</div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0"></script>
@@ -154,6 +167,8 @@
       this.speedSel = root.querySelector('.speed');
       this.stickToggle = root.querySelector('.stickToggle');
       this.smoothVideoToggle = root.querySelector('.smoothVideoToggle');
+      this.poseModelSelect = root.querySelector('.poseModelSelect');
+      this.posePerf = root.querySelector('.posePerf');
       this.flipBtn = root.querySelector('.flipBtn');
       this.timeDisplay = root.querySelector('.timeDisplay');
       this.status = root.querySelector('.status');
@@ -171,6 +186,13 @@
       this.renderLoopRunning = false;
       this.frameUpdateInFlight = null;
       this.poseInferenceInFlight = null;
+      // Keep a separate ledger independent of video replacement. loadVideo
+      // clears the current inference pointer, not the old detector's jobs.
+      this.inFlightPoseJobs = new Set();
+      this.modelGeneration = 0;
+      this.posePerfWindowStart = Date.now();
+      this.posePerfCount = 0;
+      this.posePerfTotalMs = 0;
       this.isLoadingVideo = false;
 
       this.fileInput.onchange = () => this.loadVideo();
@@ -187,6 +209,7 @@
       };
       this.stickToggle.onchange = refreshDisplayMode;
       this.smoothVideoToggle.onchange = refreshDisplayMode;
+      this.poseModelSelect.onchange = () => { void this.changePoseModel(); };
       this.flipBtn.onclick = () => this.toggleFlip();
 
       this.video.onloadedmetadata = () => {
@@ -262,6 +285,82 @@
       this.setStatus(message);
     }
 
+    async changePoseModel() {
+      if (!window.poseDetection || !window.poseDetection.createDetector) {
+        this.setStatus('姿勢モデルの読み込みライブラリが利用できません。');
+        return;
+      }
+      const kind = this.poseModelSelect.value === 'LIGHTNING' ? 'LIGHTNING' : 'THUNDER';
+      const modelType = kind === 'LIGHTNING'
+        ? poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING
+        : poseDetection.movenet.modelType.SINGLEPOSE_THUNDER;
+      const previousDetector = detector;
+      this.poseModelSelect.disabled = true;
+      this.modelGeneration += 1;
+      this.stopRenderLoop();
+      this.clearCanvas();
+      this.poses = [];
+      detector = null;
+      modelState = 'loading';
+      this.posePerf.textContent = '骨格処理速度：モデルを切り替えています…';
+      this.setStatus(kind === 'LIGHTNING'
+        ? '軽量モデルLightningを読み込んでいます…'
+        : '精度優先モデルThunderを読み込んでいます…');
+      try {
+        // Finish the old inference before disposing its model. Never run two
+        // MoveNet variants at once on memory-constrained Chromebooks.
+        while (this.inFlightPoseJobs.size) {
+          // Include work from video sources replaced while inference ran.
+          // Promise.allSettled waits for every old invocation even if one
+          // rejects; never dispose the detector while any job still uses it.
+          await Promise.allSettled([...this.inFlightPoseJobs]);
+        }
+        if (previousDetector && typeof previousDetector.dispose === 'function') {
+          previousDetector.dispose();
+        }
+        detector = await poseDetection.createDetector(
+          poseDetection.SupportedModels.MoveNet,
+          { modelType, minPoseScore: 0.10 }
+        );
+        modelState = 'ready';
+        this.setStatus(kind === 'LIGHTNING'
+          ? 'Lightning（高速）に切り替えました。認識精度が下がる場合があります。'
+          : 'Thunder（精度優先）に切り替えました。');
+      } catch (error) {
+        console.error('Pose model switching error:', error);
+        detector = null;
+        modelState = 'failed';
+        this.setStatus('姿勢モデルを切り替えられません。動画の再生・停止・シークは利用できます。');
+      } finally {
+        this.poseModelSelect.disabled = false;
+        this.posePerfWindowStart = Date.now();
+        this.posePerfCount = 0;
+        this.posePerfTotalMs = 0;
+        if (!this.isSeekingFrame && !this.isLoadingVideo) {
+          if (this.video.paused) void this.updateFrame();
+          else if (!this.video.ended) this.startRenderLoop();
+        }
+      }
+    }
+
+    recordPosePerformance(result) {
+      if (!result || typeof result.inferenceMs !== 'number') return;
+      this.posePerfCount += 1;
+      this.posePerfTotalMs += result.inferenceMs;
+      const now = Date.now();
+      const elapsed = now - this.posePerfWindowStart;
+      if (elapsed < 1000) return;
+      const fps = Math.round(this.posePerfCount * 10000 / Math.max(1, elapsed)) / 10;
+      const avg = Math.round(this.posePerfTotalMs / this.posePerfCount);
+      const modelName = this.poseModelSelect.value === 'LIGHTNING' ? 'Lightning' : 'Thunder';
+      this.posePerf.textContent = '骨格更新 ' + fps + '回/秒 ・平均推定 ' + avg +
+        'ms ・動画時刻差 ' + result.videoLagMs + 'ms ・' + modelName +
+        '（時刻差は実画面の遅延ではありません）';
+      this.posePerfWindowStart = now;
+      this.posePerfCount = 0;
+      this.posePerfTotalMs = 0;
+    }
+
     playVideo() {
       try {
         const playPromise = this.video.play();
@@ -334,11 +433,20 @@
       while (this.poseInferenceInFlight) await this.poseInferenceInFlight;
       const frame = this.captureFrame();
       if (!frame) return null;
+      const startedAt = Date.now();
+      const sourceTime = this.video.currentTime;
       const work = this.estimatePoses(frame);
       this.poseInferenceInFlight = work;
+      this.inFlightPoseJobs.add(work);
       try {
-        return { frame, poses: await work };
+        const poses = await work;
+        return {
+          frame, poses,
+          inferenceMs: Date.now() - startedAt,
+          videoLagMs: Math.round(Math.abs(this.video.currentTime - sourceTime) * 1000)
+        };
       } finally {
+        this.inFlightPoseJobs.delete(work);
         if (this.poseInferenceInFlight === work) this.poseInferenceInFlight = null;
       }
     }
@@ -361,11 +469,14 @@
       if (this.video.readyState < 2 || !this.video.videoWidth || !this.video.videoHeight) return;
       const requestId = this.seekRequestId;
       const mediaGeneration = this.mediaGeneration;
+      const modelGeneration = this.modelGeneration;
       const result = detector ? await this.analyzeFrame() : { frame: null, poses: [] };
-      if (!result || requestId !== this.seekRequestId || mediaGeneration !== this.mediaGeneration) return;
+      if (!result || requestId !== this.seekRequestId || mediaGeneration !== this.mediaGeneration ||
+          modelGeneration !== this.modelGeneration) return;
       this.poses = result.poses;
       this.paintFrame(result.frame);
       this.drawAllPoses(result.frame);
+      this.recordPosePerformance(result);
     }
 
     startRenderLoop({ immediate = true } = {}) {
@@ -395,9 +506,11 @@
       }
       const requestId = this.seekRequestId;
       const mediaGeneration = this.mediaGeneration;
+      const modelGeneration = this.modelGeneration;
       const result = detector ? await this.analyzeFrame() : { frame: null, poses: [] };
       if (loopId !== this.renderLoopId || requestId !== this.seekRequestId ||
-          mediaGeneration !== this.mediaGeneration || this.isSeekingFrame || this.video.paused) return;
+          mediaGeneration !== this.mediaGeneration || modelGeneration !== this.modelGeneration ||
+          this.isSeekingFrame || this.video.paused) return;
       if (!result) {
         this.animationId = requestAnimationFrame(() => this.render(loopId));
         return;
@@ -405,6 +518,7 @@
       this.poses = result.poses;
       this.paintFrame(result.frame);
       this.drawAllPoses(result.frame);
+      this.recordPosePerformance(result);
       this.animationId = requestAnimationFrame(() => this.render(loopId));
     }
 
@@ -537,6 +651,7 @@
         minPoseScore: 0.10 }
     );
     modelState = 'ready';
+    player.poseModelSelect.disabled = false;
     player.setModelStatus('姿勢モデルを読み込みました。骨格表示を利用できます。');
     // onplay already owns the render loop. Calling render() again here
     // would create a second loop if a video was playing while MoveNet loaded.
@@ -544,6 +659,7 @@
     console.error('Pose model loading error:', error);
     detector = null;
     modelState = 'failed';
+    player.poseModelSelect.disabled = !(window.poseDetection && window.poseDetection.createDetector);
     player.setModelStatus('姿勢モデルを読み込めません。動画の再生・停止・速度変更・シークは利用できます。');
   }
 })();

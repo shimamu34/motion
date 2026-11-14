@@ -56,6 +56,8 @@ async function boot({ model = false, deferredPose = false } = {}) {
     '.speed': { value: '1' },
     '.stickToggle': { checked: model },
     '.smoothVideoToggle': { checked: false },
+    '.poseModelSelect': { value: 'THUNDER', disabled: true },
+    '.posePerf': { textContent: '' },
     '.flipBtn': button(),
     '.timeDisplay': { textContent: '' },
     '.status': { textContent: '' }
