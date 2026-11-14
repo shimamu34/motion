@@ -186,6 +186,9 @@
       this.renderLoopRunning = false;
       this.frameUpdateInFlight = null;
       this.poseInferenceInFlight = null;
+      // Keep a separate ledger independent of video replacement. loadVideo
+      // clears the current inference pointer, not the old detector's jobs.
+      this.inFlightPoseJobs = new Set();
       this.modelGeneration = 0;
       this.posePerfWindowStart = Date.now();
       this.posePerfCount = 0;
@@ -306,8 +309,11 @@
       try {
         // Finish the old inference before disposing its model. Never run two
         // MoveNet variants at once on memory-constrained Chromebooks.
-        if (this.poseInferenceInFlight) {
-          try { await this.poseInferenceInFlight; } catch (_) {}
+        while (this.inFlightPoseJobs.size) {
+          // Include work from video sources replaced while inference ran.
+          // Promise.allSettled waits for every old invocation even if one
+          // rejects; never dispose the detector while any job still uses it.
+          await Promise.allSettled([...this.inFlightPoseJobs]);
         }
         if (previousDetector && typeof previousDetector.dispose === 'function') {
           previousDetector.dispose();
@@ -431,6 +437,7 @@
       const sourceTime = this.video.currentTime;
       const work = this.estimatePoses(frame);
       this.poseInferenceInFlight = work;
+      this.inFlightPoseJobs.add(work);
       try {
         const poses = await work;
         return {
@@ -439,6 +446,7 @@
           videoLagMs: Math.round(Math.abs(this.video.currentTime - sourceTime) * 1000)
         };
       } finally {
+        this.inFlightPoseJobs.delete(work);
         if (this.poseInferenceInFlight === work) this.poseInferenceInFlight = null;
       }
     }
