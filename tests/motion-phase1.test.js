@@ -392,6 +392,37 @@ const flushMicrotasks = async () => {
     assert.equal(x.elements['.poseModelSelect'].disabled, false);
   });
 
+  await check('Video replacement cannot dispose a still-running previous MoveNet estimate', async () => {
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    let estimates = 0;
+    const x = await boot({ model: true, poseOnEstimate: async () => {
+      if (++estimates === 1) await gate;
+      return [];
+    } });
+    x.video.paused = false;
+    x.video.onplay();
+    await flushMicrotasks();
+    assert.equal(estimates, 1);
+    // loadVideo intentionally clears poseInferenceInFlight to avoid
+    // blocking rendering the new video, but must NOT lose model ownership.
+    x.elements['input[type=file]'].files = [{ name: 'synthetic.mp4' }];
+    x.elements['input[type=file]'].onchange();
+    await flushMicrotasks();
+    x.elements['.poseModelSelect'].value = 'LIGHTNING';
+    x.elements['.poseModelSelect'].onchange();
+    await flushMicrotasks();
+    assert.equal(x.disposedModels.length, 0,
+      'old model must stay alive even though loadVideo reset current pose pointer');
+    assert.equal(x.modelConfigs.length, 1, 'new model must not overlap old inference');
+    release();
+    await flushMicrotasks();
+    assert.equal(x.disposedModels.length, 1);
+    assert.equal(x.disposedModels[0], 'Thunder');
+    assert.equal(x.modelConfigs[1].modelType, 'Lightning');
+    assert.equal(x.elements['.poseModelSelect'].disabled, false);
+  });
+
   console.log('Ran ' + count + ' Phase-1 offline checks');
 })().catch((err) => {
   console.error('FAIL ' + err.stack);
